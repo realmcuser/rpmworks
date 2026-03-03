@@ -1,0 +1,53 @@
+# Python
+backend/venv/
+backend/__pycache__/
+backend/services/__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+
+# Frontend build output and dependencies
+frontend/node_modules/
+frontend/dist/
+
+# Build artifacts
+rpmworks.tar.gz
+backend/build-workspace/
+
+# Logs
+*.log
+*.log.txt
+
+# Database backups
+backups/
+
+# Internal/operational scripts
+rebuild.bash
+backup_db.bash
+prefetchrpmworks.bash
+cleanup_db.py
+debug_db.py
+debug_log.py
+migrate_db.py
+migrate_multi_distro.py
+migrate_project_ownership.py
+
+# Container deployment (not part of the RPM-based install)
+Containerfile
+backend/Containerfile
+podman-compose.yml
+quadlet/
+
+# Internal documentation (Swedish, project-specific)
+dokumentation/
+
+# Internal status/design notes
+STATUS.md
+STATUS_20260123.md
+STATUS_20260126.md
+AGENTS.md
+DESIGN.md
+
+# Secrets and local config
+.env
+*.env
