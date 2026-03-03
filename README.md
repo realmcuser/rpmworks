@@ -2,6 +2,8 @@
 
 A web-based RPM build management system — because clicking through a UI beats memorising rpmbuild flags.
 
+![RPMWorks](rpmworks.png)
+
 ## The Story Behind This
 
 I manage a bunch of AlmaLinux and Fedora systems at work. Over time I found myself building more and more custom RPM packages — internal tools, scripts, config files that need to land in the right place with the right permissions. The standard workflow of SSH:ing into a build box, shuffling files around, and running `rpmbuild` by hand works, but it does not scale well and it is impossible to hand off to a colleague.
