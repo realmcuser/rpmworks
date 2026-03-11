@@ -24,7 +24,8 @@ I should be transparent: I am a Linux sysadmin and IT consultant, not a professi
 - **Raw spec mode** — bring your own complete spec file and RPMWorks will use it as-is
 - **Isolated builds** — each build runs inside a Podman container matching your target distribution
 - **Multi-distribution** — build for AlmaLinux 9, AlmaLinux 10, Fedora, or whatever you configure
-- **Publishing** — push finished RPMs to a remote repository via SSH and run `createrepo` automatically
+- **Publishing via SSH** — push finished RPMs to a remote yum/dnf repository and run `createrepo` automatically
+- **Publishing via GitHub Releases** — upload RPMs directly as GitHub release assets; each build gets its own release tag (e.g. `v1.0.0-58`), old releases are pruned automatically by the same retention policy, and accumulated download counts are tracked and shown on the repository card
 - **Build history** — browse, download, and manage past builds with configurable retention
 - **REST API** — trigger builds remotely from CI/CD pipelines or cron jobs
 - **User management** — admin controls for registration, user accounts, and roles
