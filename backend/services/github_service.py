@@ -54,6 +54,15 @@ class GitHubReleaseService:
             },
         )
 
+    def get_release_downloads(self, release_id: int) -> int:
+        """Return the total download count for all assets in a release."""
+        url = f"{self.API_BASE}/repos/{self.github_repo}/releases/{release_id}/assets"
+        try:
+            assets = self._api_request("GET", url)
+            return sum(a.get("download_count", 0) for a in assets)
+        except Exception:
+            return 0
+
     def delete_asset(self, asset_id: int) -> None:
         """Delete a release asset by ID."""
         url = f"{self.API_BASE}/repos/{self.github_repo}/releases/assets/{asset_id}"

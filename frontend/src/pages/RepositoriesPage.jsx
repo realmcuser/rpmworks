@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Server, Plus, Trash2, Pencil, Key, Github } from 'lucide-react';
+import { Server, Plus, Trash2, Pencil, Key, Github, Download } from 'lucide-react';
 import { fetchRepositories, createRepository, updateRepository, deleteRepository, fetchDistributions } from '../services/api';
 
 const RepositoriesPage = () => {
@@ -201,6 +201,14 @@ const RepositoriesPage = () => {
 
               {repo.description && (
                 <p className="text-sm text-text-muted mb-4">{repo.description}</p>
+              )}
+
+              {repo.repo_type === 'github_releases' && (
+                <div className="flex items-center gap-2 mb-4 text-sm">
+                  <Download className="w-4 h-4 text-purple-400" />
+                  <span className="text-text-muted">Total downloads:</span>
+                  <span className="text-white font-semibold">{(repo.github_downloads || 0).toLocaleString()}</span>
+                </div>
               )}
 
               <div className="space-y-2 text-sm">

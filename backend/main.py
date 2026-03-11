@@ -22,6 +22,7 @@ models.Base.metadata.create_all(bind=engine)
 with engine.connect() as _conn:
     _conn.execute(text("ALTER TABLE repositories ADD COLUMN IF NOT EXISTS repo_type VARCHAR DEFAULT 'ssh'"))
     _conn.execute(text("ALTER TABLE repositories ADD COLUMN IF NOT EXISTS github_repo VARCHAR"))
+    _conn.execute(text("ALTER TABLE repositories ADD COLUMN IF NOT EXISTS github_downloads INTEGER DEFAULT 0"))
     _conn.execute(text("ALTER TABLE repositories ALTER COLUMN host DROP NOT NULL"))
     _conn.execute(text("ALTER TABLE repositories ALTER COLUMN username DROP NOT NULL"))
     _conn.commit()
@@ -263,6 +264,7 @@ class RepositoryResponse(BaseModel):
     paths: List[RepositoryPathSchema] = []
     description: Optional[str] = None
     github_repo: Optional[str] = None
+    github_downloads: int = 0
     class Config:
         from_attributes = True
 

@@ -128,6 +128,13 @@ class DeploymentService:
             release_id = release["id"]
             logs.append(f"Release v{version} ready (id={release_id})")
 
+            # Fetch download count for existing assets before they are replaced
+            downloads = svc.get_release_downloads(release_id)
+            if downloads > 0:
+                logs.append(f"Accumulating {downloads} downloads from previous release assets")
+                repo.github_downloads = (repo.github_downloads or 0) + downloads
+                self.db.commit()
+
             for local_path in build.rpm_files:
                 if not os.path.exists(local_path):
                     logs.append(f"Warning: file not found: {local_path}")

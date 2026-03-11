@@ -124,6 +124,7 @@ class Repository(Base):
     ssh_key_path = Column(String, nullable=True)
     description = Column(String, nullable=True)
     github_repo = Column(String, nullable=True)  # e.g. "realmcuser/cockpit-nspawn"
+    github_downloads = Column(Integer, default=0)  # Accumulated download count across releases
 
     deployments = relationship("Deployment", back_populates="repository", cascade="all, delete-orphan")
     project_targets = relationship("DeploymentTarget", back_populates="repository", cascade="all, delete-orphan")
