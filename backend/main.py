@@ -310,6 +310,7 @@ def _repo_to_response(repo):
         ssh_key_path=repo.ssh_key_path,
         description=repo.description,
         github_repo=getattr(repo, 'github_repo', None),
+        github_downloads=getattr(repo, 'github_downloads', 0) or 0,
         paths=[RepositoryPathSchema(distribution_id=p.distribution_id, base_path=p.base_path) for p in repo.paths]
     )
 
