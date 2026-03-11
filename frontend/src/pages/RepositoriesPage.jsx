@@ -211,25 +211,27 @@ const RepositoriesPage = () => {
                 </div>
               )}
 
-              <div className="space-y-2 text-sm">
-                {repo.paths && repo.paths.length > 0 ? (
-                  repo.paths.map((p, idx) => (
-                    <div key={idx} className="flex justify-between py-1 border-b border-border/50">
-                      <span className="text-text-muted text-xs">{p.distribution_id}</span>
-                      <span className="text-text font-mono truncate max-w-[150px] text-xs" title={p.base_path}>{p.base_path}</span>
-                    </div>
-                  ))
-                ) : (
-                  <div className="py-1 text-text-muted text-xs italic">{t('repositories.noPathsConfigured')}</div>
-                )}
-                <div className="flex justify-between py-1 border-b border-border/50">
-                  <span className="text-text-muted">{t('repositories.authMethod')}</span>
-                  <span className="text-text flex items-center gap-1">
-                    {repo.ssh_key_path ? <Key className="w-3 h-3" /> : null}
-                    {repo.ssh_key_path ? t('repositories.sshKey') : t('repositories.password')}
-                  </span>
+              {repo.repo_type !== 'github_releases' && (
+                <div className="space-y-2 text-sm">
+                  {repo.paths && repo.paths.length > 0 ? (
+                    repo.paths.map((p, idx) => (
+                      <div key={idx} className="flex justify-between py-1 border-b border-border/50">
+                        <span className="text-text-muted text-xs">{p.distribution_id}</span>
+                        <span className="text-text font-mono truncate max-w-[150px] text-xs" title={p.base_path}>{p.base_path}</span>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="py-1 text-text-muted text-xs italic">{t('repositories.noPathsConfigured')}</div>
+                  )}
+                  <div className="flex justify-between py-1 border-b border-border/50">
+                    <span className="text-text-muted">{t('repositories.authMethod')}</span>
+                    <span className="text-text flex items-center gap-1">
+                      {repo.ssh_key_path ? <Key className="w-3 h-3" /> : null}
+                      {repo.ssh_key_path ? t('repositories.sshKey') : t('repositories.password')}
+                    </span>
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
           ))}
         </div>
