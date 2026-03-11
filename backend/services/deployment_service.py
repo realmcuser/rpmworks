@@ -148,6 +148,18 @@ class DeploymentService:
             existing_tags = {r["tag_name"]: r for r in existing_releases}
 
             if tag not in existing_tags:
+                # Snapshot total downloads across all existing releases.
+                # Using max() ensures the counter never goes backward even when
+                # old releases are deleted by the retention policy below.
+                live_downloads = sum(
+                    svc.get_release_downloads(r["id"]) for r in existing_releases
+                )
+                new_total = max(repo.github_downloads or 0, live_downloads)
+                if new_total != (repo.github_downloads or 0):
+                    logs.append(f"Download snapshot: {new_total} total")
+                    repo.github_downloads = new_total
+                    self.db.commit()
+
                 # Apply retention: delete oldest releases beyond max_builds
                 project = self.db.query(Project).filter(Project.id == build.project_id).first()
                 max_releases = (project.max_builds if project else 10)
@@ -156,10 +168,6 @@ class DeploymentService:
                     # GitHub returns releases newest-first; oldest are at the end
                     to_delete = existing_releases[max_releases - 1:]
                     for old_release in to_delete:
-                        downloads = svc.get_release_downloads(old_release["id"])
-                        if downloads > 0:
-                            logs.append(f"Accumulating {downloads} downloads from {old_release['tag_name']}")
-                            repo.github_downloads = (repo.github_downloads or 0) + downloads
                         svc.delete_release(old_release["id"])
                         logs.append(f"Deleted old release {old_release['tag_name']} (retention policy)")
                     self.db.commit()
