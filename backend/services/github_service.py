@@ -34,9 +34,8 @@ class GitHubReleaseService:
             body = e.read().decode()
             raise Exception(f"GitHub API {method} {url} → {e.code}: {body}")
 
-    def create_or_get_release(self, version: str) -> dict:
-        """Return existing release for v{version}, or create it."""
-        tag = f"v{version}"
+    def create_or_get_release(self, tag: str) -> dict:
+        """Return existing release for the given tag, or create it."""
         url = f"{self.API_BASE}/repos/{self.github_repo}/releases/tags/{tag}"
         try:
             return self._api_request("GET", url)
@@ -53,6 +52,55 @@ class GitHubReleaseService:
                 "prerelease": False,
             },
         )
+
+    def list_releases(self) -> list:
+        """Return all releases for the repo, sorted newest first."""
+        url = f"{self.API_BASE}/repos/{self.github_repo}/releases?per_page=100"
+        try:
+            return self._api_request("GET", url)
+        except Exception:
+            return []
+
+    def delete_release(self, release_id: int) -> None:
+        """Delete a release and its tag."""
+        # First get the tag name so we can delete it too
+        try:
+            release = self._api_request("GET", f"{self.API_BASE}/repos/{self.github_repo}/releases/{release_id}")
+            tag_name = release.get("tag_name")
+        except Exception:
+            tag_name = None
+
+        # Delete the release
+        req = urllib.request.Request(
+            f"{self.API_BASE}/repos/{self.github_repo}/releases/{release_id}",
+            headers={
+                "Authorization": f"token {self.token}",
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+            method="DELETE",
+        )
+        try:
+            urllib.request.urlopen(req)
+        except urllib.error.HTTPError as e:
+            if e.code != 204:
+                raise Exception(f"GitHub DELETE release {release_id} → {e.code}")
+
+        # Delete the tag
+        if tag_name:
+            tag_req = urllib.request.Request(
+                f"{self.API_BASE}/repos/{self.github_repo}/git/refs/tags/{tag_name}",
+                headers={
+                    "Authorization": f"token {self.token}",
+                    "Accept": "application/vnd.github+json",
+                    "X-GitHub-Api-Version": "2022-11-28",
+                },
+                method="DELETE",
+            )
+            try:
+                urllib.request.urlopen(tag_req)
+            except Exception:
+                pass  # Tag deletion is best-effort
 
     def get_release_downloads(self, release_id: int) -> int:
         """Return the total download count for all assets in a release."""

@@ -1,7 +1,8 @@
 import os
+import re
 import paramiko
 from datetime import datetime
-from models import Repository, Build
+from models import Repository, Build, Project
 from services.ssh_service import SSHService
 from services.github_service import GitHubReleaseService
 
@@ -109,8 +110,25 @@ class DeploymentService:
         finally:
             ssh.close()
 
+    def _extract_github_tag(self, build: Build) -> str:
+        """Derive a GitHub release tag from the RPM filename.
+        e.g. rpmworks-1.0.0-15.el9.x86_64.rpm → v1.0.0-15
+        Falls back to v{version} if the pattern doesn't match.
+        """
+        if build.rpm_files:
+            fname = os.path.basename(build.rpm_files[0])
+            m = re.search(r'-(\d[\d.]*)-(\d+)\.', fname)
+            if m:
+                return f"v{m.group(1)}-{m.group(2)}"
+        return f"v{build.version or '0.0.0'}"
+
     def _deploy_to_github(self, build: Build, repo: Repository):
-        """Upload build artifacts to a GitHub Release."""
+        """Upload build artifacts to a GitHub Release.
+
+        Each build gets its own release tagged v{version}-{release_number}.
+        Old releases beyond the project's max_builds limit are deleted
+        automatically, with their download counts accumulated first.
+        """
         logs = []
 
         if not repo.github_repo:
@@ -118,22 +136,37 @@ class DeploymentService:
         if not repo.password:
             return False, "GitHub token not configured (missing token)"
 
-        version = build.version or "0.0.0"
-        logs.append(f"GitHub Releases: {repo.github_repo} — v{version}")
+        tag = self._extract_github_tag(build)
+        logs.append(f"GitHub Releases: {repo.github_repo} — {tag}")
 
         try:
             svc = GitHubReleaseService(repo.github_repo, repo.password)
 
-            release = svc.create_or_get_release(version)
-            release_id = release["id"]
-            logs.append(f"Release v{version} ready (id={release_id})")
+            # Check if this release already exists (multi-distro: second distro
+            # uploads to the same release that the first distro already created)
+            existing_releases = svc.list_releases()
+            existing_tags = {r["tag_name"]: r for r in existing_releases}
 
-            # Fetch download count for existing assets before they are replaced
-            downloads = svc.get_release_downloads(release_id)
-            if downloads > 0:
-                logs.append(f"Accumulating {downloads} downloads from previous release assets")
-                repo.github_downloads = (repo.github_downloads or 0) + downloads
-                self.db.commit()
+            if tag not in existing_tags:
+                # Apply retention: delete oldest releases beyond max_builds
+                project = self.db.query(Project).filter(Project.id == build.project_id).first()
+                max_releases = (project.max_builds if project else 10)
+
+                if len(existing_releases) >= max_releases:
+                    # GitHub returns releases newest-first; oldest are at the end
+                    to_delete = existing_releases[max_releases - 1:]
+                    for old_release in to_delete:
+                        downloads = svc.get_release_downloads(old_release["id"])
+                        if downloads > 0:
+                            logs.append(f"Accumulating {downloads} downloads from {old_release['tag_name']}")
+                            repo.github_downloads = (repo.github_downloads or 0) + downloads
+                        svc.delete_release(old_release["id"])
+                        logs.append(f"Deleted old release {old_release['tag_name']} (retention policy)")
+                    self.db.commit()
+
+            release = svc.create_or_get_release(tag)
+            release_id = release["id"]
+            logs.append(f"Release {tag} ready (id={release_id})")
 
             for local_path in build.rpm_files:
                 if not os.path.exists(local_path):
