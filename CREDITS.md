@@ -53,7 +53,7 @@ RPMWorks is built on the shoulders of a lot of excellent open source work. These
 
 | Tool | Role |
 |---|---|
-| [Claude Code](https://claude.ai/claude-code) | AI coding assistant used throughout development |
+| [Claude Code](https://github.com/anthropics/claude-code) | AI coding assistant used throughout development |
 
 ---
 
