@@ -102,6 +102,10 @@ If it helps you, great. If something breaks, you are a sysadmin — you know how
 - Podman (used by the build engine for isolated builds)
 - An SSH key if your projects fetch files from remote servers
 
+## Credits
+
+RPMWorks is built on a lot of excellent open source work. See [CREDITS.md](CREDITS.md) for the full list.
+
 ---
 
 *Built by a sysadmin who wanted a better way to package things.*
