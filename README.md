@@ -22,6 +22,7 @@ I should be transparent: I am a Linux sysadmin and IT consultant, not a professi
 - **File mapping** — define exactly where each file lands, with owner, group, and permissions
 - **Automatic spec generation** — RPMWorks writes the `%install` and `%files` sections for you
 - **Raw spec mode** — bring your own complete spec file and RPMWorks will use it as-is
+- **Changelog management** — per-build changelog messages are stored in the database and injected into `%changelog` automatically; raw mode users can opt in with a single checkbox
 - **Isolated builds** — each build runs inside a Podman container matching your target distribution
 - **Multi-distribution** — build for AlmaLinux 9, AlmaLinux 10, Fedora, or whatever you configure
 - **Publishing via SSH** — push finished RPMs to a remote yum/dnf repository and run `createrepo` automatically
@@ -81,8 +82,10 @@ TOKEN=$(curl -s -X POST "http://<server>:8005/api/token" \
 curl -X POST "http://<server>:8005/api/build/start" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"project_id": 1}'
+  -d '{"project_id": 1, "changelog_message": "Automated build from CI"}'
 ```
+
+The `changelog_message` field is optional. If provided, it is stored against the build and injected into the `%changelog` section of the spec file.
 
 See `rpmbuild-curl.bash` in the repository for a complete script that starts a build, polls for completion, and downloads the RPM.
 
