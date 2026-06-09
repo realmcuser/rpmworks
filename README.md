@@ -87,6 +87,17 @@ curl -X POST "http://<server>:8005/api/build/start" \
 
 The `changelog_message` field is optional. If provided, it is stored against the build and injected into the `%changelog` section of the spec file.
 
+You can also update a project's spec file remotely without opening the UI:
+
+```bash
+curl -s -X PUT "http://<server>:8005/api/projects/<PROJECT_ID>/spec" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{\"spec_template\": $(cat mypackage.spec | jq -Rs .)}"
+```
+
+This is useful when the spec file is maintained in a separate repository or managed by another automation script. The endpoint creates the build configuration if it does not exist yet.
+
 See `rpmbuild-curl.bash` in the repository for a complete script that starts a build, polls for completion, and downloads the RPM.
 
 ## A Word of Warning
