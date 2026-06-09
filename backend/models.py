@@ -73,7 +73,10 @@ class BuildConfig(Base):
 
     # Raw spec mode - use spec template as-is without auto-injection of %install/%files
     use_raw_spec = Column(Boolean, default=False)
-    
+
+    # Inject managed %changelog in raw mode (strips existing %changelog from spec)
+    inject_changelog = Column(Boolean, default=False)
+
     project = relationship("Project", back_populates="build_config")
 
 class Build(Base):
@@ -89,6 +92,8 @@ class Build(Base):
     target_distro = Column(String, nullable=True)
     started_at = Column(String, nullable=True)
     completed_at = Column(String, nullable=True)
+    changelog_message = Column(Text, nullable=True)
+    build_evr = Column(String, nullable=True)
 
     project = relationship("Project", back_populates="builds")
     deployments = relationship("Deployment", back_populates="build", cascade="all, delete-orphan")

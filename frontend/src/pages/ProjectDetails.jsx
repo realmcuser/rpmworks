@@ -58,6 +58,10 @@ const ProjectDetails = () => {
   const [cloneName, setCloneName] = useState('');
   const [cloning, setCloning] = useState(false);
 
+  // Build dialog state
+  const [showBuildDialog, setShowBuildDialog] = useState(false);
+  const [changelogMessage, setChangelogMessage] = useState('');
+
   // Notes state
   const [notesText, setNotesText] = useState('');
   const [savingNotes, setSavingNotes] = useState(false);
@@ -134,11 +138,12 @@ const ProjectDetails = () => {
   };
 
   const handleStartBuild = async () => {
+    setShowBuildDialog(false);
     setBuilding(true);
     try {
-      const response = await startBuild(project.id);
+      const response = await startBuild(project.id, changelogMessage || null);
+      setChangelogMessage('');
       setActiveTab('builds');
-      // Handle both old (build_id) and new (build_ids) response formats
       if (response.build_ids && response.build_ids.length > 0) {
           setExpandedBuildId(response.build_ids[0]);
       } else if (response.build_id) {
@@ -347,12 +352,14 @@ const ProjectDetails = () => {
               {t('project.copyProject')}
             </button>
             <button
-              onClick={handleStartBuild}
-              disabled={building}
+              onClick={() => setShowBuildDialog(true)}
+              disabled={building || project?.builds?.some(b => b.status === 'running' || b.status === 'pending')}
               className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary-hover text-white rounded-lg transition-colors shadow-lg shadow-primary/20 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              <Play className="w-4 h-4" />
-              {building ? t('project.building') : t('project.buildNow')}
+              {(building || project?.builds?.some(b => b.status === 'running' || b.status === 'pending'))
+                ? <><Loader2 className="w-4 h-4 animate-spin" />{t('project.building')}</>
+                : <><Play className="w-4 h-4" />{t('project.buildNow')}</>
+              }
             </button>
           </div>
         </div>
@@ -1044,6 +1051,44 @@ const ProjectDetails = () => {
                   {t('project.copy')}
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Build dialog */}
+      {showBuildDialog && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-surface border border-border rounded-xl p-6 w-full max-w-md space-y-4">
+            <h2 className="text-lg font-semibold text-white">{t('project.builds.buildDialog.title')}</h2>
+            <div>
+              <label className="block text-sm font-medium text-text-muted mb-1">
+                {t('project.builds.buildDialog.changelogLabel')}
+              </label>
+              <input
+                type="text"
+                value={changelogMessage}
+                onChange={(e) => setChangelogMessage(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleStartBuild(); }}
+                placeholder={t('project.builds.buildDialog.changelogPlaceholder')}
+                className="w-full bg-background border border-border rounded-lg px-3 py-2 text-text focus:outline-none focus:border-primary"
+                autoFocus
+              />
+            </div>
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => { setShowBuildDialog(false); setChangelogMessage(''); }}
+                className="px-4 py-2 bg-surface-hover border border-border rounded-lg text-text hover:bg-surface transition-colors"
+              >
+                {t('project.builds.buildDialog.cancel')}
+              </button>
+              <button
+                onClick={handleStartBuild}
+                className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary-hover text-white rounded-lg transition-colors"
+              >
+                <Play className="w-4 h-4" />
+                {t('project.builds.buildDialog.start')}
+              </button>
             </div>
           </div>
         </div>

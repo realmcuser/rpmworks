@@ -169,10 +169,12 @@ export async function browsePath(host, username, password, path, sshKey) {
 
 
 
-export async function startBuild(projectId) {
+export async function startBuild(projectId, changelogMessage = null) {
+  const body = { project_id: projectId };
+  if (changelogMessage) body.changelog_message = changelogMessage;
   const response = await fetchWithAuth('/api/build/start', {
     method: 'POST',
-    body: JSON.stringify({ project_id: projectId }),
+    body: JSON.stringify(body),
   });
   
   if (!response.ok) {

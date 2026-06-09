@@ -97,7 +97,10 @@ rm -rf %{buildroot}
         extra_vars_target: project.build_config.extra_vars_target || 'name',
 
         // Raw spec mode - use spec as-is
-        use_raw_spec: project.build_config.use_raw_spec || false
+        use_raw_spec: project.build_config.use_raw_spec || false,
+
+        // Inject managed %changelog in raw mode
+        inject_changelog: project.build_config.inject_changelog || false,
       });
     }
   }, [project]);
@@ -351,6 +354,25 @@ rm -rf %{buildroot}
             </p>
           </div>
         </div>
+        {config.use_raw_spec && (
+          <div className="flex items-start gap-3 mt-3 pt-3 border-t border-border">
+            <input
+              type="checkbox"
+              id="inject-changelog"
+              checked={config.inject_changelog}
+              onChange={(e) => handleChange('inject_changelog', e.target.checked)}
+              className="w-4 h-4 mt-1 rounded border-border bg-background checked:bg-primary"
+            />
+            <div>
+              <label htmlFor="inject-changelog" className="text-sm font-medium text-white cursor-pointer">
+                {t('specEditor.injectChangelog')}
+              </label>
+              <p className="text-xs text-text-muted mt-1">
+                {t('specEditor.injectChangelogHint')}
+              </p>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Spec File Editor */}

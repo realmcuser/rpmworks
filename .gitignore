@@ -22,6 +22,7 @@ backend/build-workspace/
 backups/
 
 # Internal/operational scripts
+start-rpmworks-*.sh
 rebuild.bash
 backup_db.bash
 prefetchrpmworks.bash
@@ -40,6 +41,11 @@ quadlet/
 
 # Internal documentation (Swedish, project-specific)
 dokumentation/
+manual.md
+
+# Feature proposals / internal planning notes
+"förslag-spec-api.md"
+förslag-*.md
 
 # Internal status/design notes
 STATUS.md

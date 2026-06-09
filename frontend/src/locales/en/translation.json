@@ -164,7 +164,14 @@
       "confirmDelete": "Are you sure you want to delete this build?",
       "deleteFailed": "Failed to delete build: ",
       "startFailed": "Failed to start build",
-      "updateFailed": "Failed to update project: "
+      "updateFailed": "Failed to update project: ",
+      "buildDialog": {
+        "title": "Start Build",
+        "changelogLabel": "Changelog entry (optional)",
+        "changelogPlaceholder": "What changed in this build?",
+        "start": "Start Build",
+        "cancel": "Cancel"
+      }
     }
   },
   "deployment": {
@@ -217,7 +224,9 @@
     "extraVarsVersionExample": "Example: Version = %(remote), Release = %(timestamp).1%(?dist)",
     "timestampFormat": "Timestamp Format (strftime)",
     "useRawSpec": "Use Spec File Without Modification (Raw Mode)",
-    "useRawSpecHint": "Enable this to use your Spec file exactly as-is. RPM Works will NOT inject %install or %files sections. Use this when you have your own complete Spec file with Source0: and %setup."
+    "useRawSpecHint": "Enable this to use your Spec file exactly as-is. RPM Works will NOT inject %install or %files sections. Use this when you have your own complete Spec file with Source0: and %setup.",
+    "injectChangelog": "Manage %changelog automatically",
+    "injectChangelogHint": "RPMWorks will strip any %changelog section from your spec and inject one based on the build history. The message you provide when starting a build will be used as the changelog entry."
   },
   "artifacts": {
     "title": "Artifact Repository",

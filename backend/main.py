@@ -25,6 +25,9 @@ with engine.connect() as _conn:
     _conn.execute(text("ALTER TABLE repositories ADD COLUMN IF NOT EXISTS github_downloads INTEGER DEFAULT 0"))
     _conn.execute(text("ALTER TABLE repositories ALTER COLUMN host DROP NOT NULL"))
     _conn.execute(text("ALTER TABLE repositories ALTER COLUMN username DROP NOT NULL"))
+    _conn.execute(text("ALTER TABLE build_configs ADD COLUMN IF NOT EXISTS inject_changelog BOOLEAN DEFAULT FALSE"))
+    _conn.execute(text("ALTER TABLE builds ADD COLUMN IF NOT EXISTS changelog_message TEXT"))
+    _conn.execute(text("ALTER TABLE builds ADD COLUMN IF NOT EXISTS build_evr VARCHAR"))
     _conn.commit()
 
 app = FastAPI(title="RPM Works API")
@@ -165,6 +168,9 @@ class BuildConfig(BaseModel):
     # Raw spec mode - use spec as-is without auto-injection
     use_raw_spec: bool = False
 
+    # Inject managed %changelog in raw mode
+    inject_changelog: bool = False
+
     class Config:
         from_attributes = True
 
@@ -225,6 +231,7 @@ class BrowseRequest(BaseModel):
 
 class BuildRequest(BaseModel):
     project_id: int
+    changelog_message: Optional[str] = None
 
 class BuildArtifact(BaseModel):
     id: int
@@ -748,7 +755,8 @@ async def start_build(req: BuildRequest, background_tasks: BackgroundTasks, db: 
             version=project.build_config.version,
             target_distro=distro_id,
             status="pending",
-            started_at=started_at
+            started_at=started_at,
+            changelog_message=req.changelog_message or None
         )
         db.add(new_build)
         db.commit()
@@ -1061,7 +1069,8 @@ async def clone_project(project_id: int, req: ProjectCloneRequest, db: Session =
             use_extra_name_vars=bc.use_extra_name_vars,
             timestamp_format=bc.timestamp_format,
             extra_vars_target=bc.extra_vars_target,
-            use_raw_spec=bc.use_raw_spec
+            use_raw_spec=bc.use_raw_spec,
+            inject_changelog=bc.inject_changelog
         )
         db.add(new_build_config)
 
@@ -1087,6 +1096,31 @@ async def clone_project(project_id: int, req: ProjectCloneRequest, db: Session =
     db.commit()
     db.refresh(new_project)
     return new_project
+
+class SpecUpdateRequest(BaseModel):
+    spec_template: str
+
+@app.put("/api/projects/{project_id}/spec")
+async def update_project_spec(
+    project_id: int,
+    req: SpecUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    project = db.query(models.Project).filter(models.Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if not check_project_access(project, current_user):
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    db_build_config = db.query(models.BuildConfig).filter(models.BuildConfig.project_id == project_id).first()
+    if not db_build_config:
+        db_build_config = models.BuildConfig(project_id=project_id)
+        db.add(db_build_config)
+
+    db_build_config.spec_template = req.spec_template
+    db.commit()
+    return {"ok": True}
 
 class SpecValidationRequest(BaseModel):
     content: str
@@ -1140,6 +1174,7 @@ async def get_project(project_id: int, db: Session = Depends(get_db), current_us
             timestamp_format=bc.timestamp_format or "%y%m%d%H%M",
             extra_vars_target=bc.extra_vars_target or "name",
             use_raw_spec=bc.use_raw_spec,
+            inject_changelog=bc.inject_changelog or False,
         )
 
     return ProjectDetail(
@@ -1242,6 +1277,10 @@ async def update_build_config(project_id: int, config: BuildConfig, db: Session 
     if config.use_raw_spec is not None:
         db_build_config.use_raw_spec = config.use_raw_spec
 
+    # Inject changelog in raw mode
+    if config.inject_changelog is not None:
+        db_build_config.inject_changelog = config.inject_changelog
+
     # Handle target_distros: update project_distributions
     if config.target_distros is not None:
         from sqlalchemy import delete
@@ -1272,6 +1311,7 @@ async def update_build_config(project_id: int, config: BuildConfig, db: Session 
         timestamp_format=db_build_config.timestamp_format or "%y%m%d%H%M",
         extra_vars_target=db_build_config.extra_vars_target or "name",
         use_raw_spec=db_build_config.use_raw_spec,
+        inject_changelog=db_build_config.inject_changelog or False,
     )
 
 @app.get("/api/projects/{project_id}/files")

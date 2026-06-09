@@ -164,7 +164,14 @@
       "confirmDelete": "Är du säker på att du vill ta bort detta bygge?",
       "deleteFailed": "Kunde inte ta bort bygge: ",
       "startFailed": "Kunde inte starta bygge",
-      "updateFailed": "Kunde inte uppdatera projekt: "
+      "updateFailed": "Kunde inte uppdatera projekt: ",
+      "buildDialog": {
+        "title": "Starta bygge",
+        "changelogLabel": "Changelog-rad (valfritt)",
+        "changelogPlaceholder": "Vad ändrades i det här bygget?",
+        "start": "Starta bygge",
+        "cancel": "Avbryt"
+      }
     }
   },
   "deployment": {
@@ -217,7 +224,9 @@
     "extraVarsVersionExample": "Exempel: Version = %(remote), Release = %(timestamp).1%(?dist)",
     "timestampFormat": "Tidsstämpelformat (strftime)",
     "useRawSpec": "Använd Spec-fil utan modifiering (Raw Mode)",
-    "useRawSpecHint": "Aktivera detta för att använda din Spec-fil exakt som den är. RPM Works kommer INTE att injicera %install eller %files sektioner. Använd detta när du har en egen komplett Spec-fil med Source0: och %setup."
+    "useRawSpecHint": "Aktivera detta för att använda din Spec-fil exakt som den är. RPM Works kommer INTE att injicera %install eller %files sektioner. Använd detta när du har en egen komplett Spec-fil med Source0: och %setup.",
+    "injectChangelog": "Hantera %changelog automatiskt",
+    "injectChangelogHint": "RPMWorks tar bort eventuell %changelog-sektion ur din spec och lägger till en baserad på bygghistoriken. Meddelandet du anger när du startar ett bygge används som changelog-rad."
   },
   "artifacts": {
     "title": "Paketförråd",

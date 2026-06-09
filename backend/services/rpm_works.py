@@ -13,6 +13,16 @@ class RPMWorks:
     def __init__(self):
         os.makedirs(BUILD_ROOT, exist_ok=True)
 
+    def _build_changelog_section(self, current_date, current_evr, current_message, history):
+        lines = ["%changelog"]
+        lines.append(f"* {current_date} RPMWorks <builder@example.com> - {current_evr}")
+        lines.append(f"- {(current_message or 'Build via RPMWorks').strip()}")
+        for entry in history:
+            lines.append("")
+            lines.append(f"* {entry['date']} RPMWorks <builder@example.com> - {entry['evr']}")
+            lines.append(f"- {(entry['message'] or 'Build via RPMWorks').strip()}")
+        return "\n".join(lines)
+
     def _prepare_directory(self, build_id):
         path = os.path.join(BUILD_ROOT, str(build_id))
         if os.path.exists(path):
@@ -24,7 +34,7 @@ class RPMWorks:
             
         return path
 
-    def _generate_spec_file(self, project: Project, build_config: BuildConfig, build_dir: str, name_suffix: str = "", dist_suffix: str = "", remote_val: str = "", ts_val: str = ""):
+    def _generate_spec_file(self, project: Project, build_config: BuildConfig, build_dir: str, name_suffix: str = "", dist_suffix: str = "", remote_val: str = "", ts_val: str = "", changelog_message: str = "", changelog_history: list = None):
         # Use rpm_name if set, otherwise fall back to project.name
         effective_name = build_config.rpm_name or project.name
         spec_path = os.path.join(build_dir, 'SPECS', f"{effective_name}.spec")
@@ -34,35 +44,43 @@ class RPMWorks:
         if build_config.use_raw_spec and build_config.spec_template:
             spec_content = build_config.spec_template
 
+            # Compute EVR for build tracking and optional changelog injection
+            raw_ver = build_config.version or '1.0.0'
+            raw_rel = build_config.release or '1'
+            if remote_val or ts_val:
+                raw_ver = raw_ver.replace("%(remote)", remote_val).replace("%(timestamp)", ts_val)
+                raw_rel = raw_rel.replace("%(remote)", remote_val).replace("%(timestamp)", ts_val)
+            if "%(?dist)" in raw_rel and dist_suffix:
+                raw_rel = raw_rel.replace("%(?dist)", dist_suffix)
+            build_evr = f"{raw_ver}-{raw_rel}"
+
             # Apply rpm_name override if set
             if build_config.rpm_name:
                 spec_content = re.sub(r"^(Name:\s*).*$", f"Name:           {build_config.rpm_name}", spec_content, flags=re.MULTILINE)
 
             # Apply version from UI field
             if build_config.version:
-                ver_val = build_config.version
-                # Replace dynamic placeholders in version
-                if remote_val or ts_val:
-                    ver_val = ver_val.replace("%(remote)", remote_val).replace("%(timestamp)", ts_val)
-                spec_content = re.sub(r"^(Version:\s*).*$", f"Version:        {ver_val}", spec_content, flags=re.MULTILINE)
+                spec_content = re.sub(r"^(Version:\s*).*$", f"Version:        {raw_ver}", spec_content, flags=re.MULTILINE)
 
             # Apply release from UI field (with %(?dist) replacement)
             if build_config.release:
-                rel_val = build_config.release
-                # Replace dynamic placeholders in release
-                if remote_val or ts_val:
-                    rel_val = rel_val.replace("%(remote)", remote_val).replace("%(timestamp)", ts_val)
-                if "%(?dist)" in rel_val and dist_suffix:
-                    rel_val = rel_val.replace("%(?dist)", dist_suffix)
-                spec_content = re.sub(r"^(Release:\s*).*$", f"Release:        {rel_val}", spec_content, flags=re.MULTILINE)
+                spec_content = re.sub(r"^(Release:\s*).*$", f"Release:        {raw_rel}", spec_content, flags=re.MULTILINE)
 
             # Apply name suffix (from remote command + timestamp)
             if name_suffix:
                 spec_content = re.sub(r"^(Name:\s*)(.*)$", f"\\1\\2{name_suffix}", spec_content, flags=re.MULTILINE)
 
+            # Inject managed %changelog if enabled
+            if build_config.inject_changelog:
+                spec_content = re.sub(r'\n%changelog\b.*', '', spec_content, flags=re.DOTALL).rstrip()
+                changelog = self._build_changelog_section(
+                    time.strftime("%a %b %d %Y"), build_evr, changelog_message, changelog_history or []
+                )
+                spec_content += "\n\n" + changelog + "\n"
+
             with open(spec_path, 'w') as f:
                 f.write(spec_content)
-            return spec_path
+            return spec_path, build_evr
 
         # Default mappings to file list if empty (fallback)
         mappings = build_config.file_mappings
@@ -125,6 +143,9 @@ class RPMWorks:
         
         if not template or not template.strip():
             # Basic Spec Template (Fallback)
+            changelog_section = self._build_changelog_section(
+                time.strftime("%a %b %d %Y"), f"{ver_val}-{rel_val}", changelog_message, changelog_history or []
+            )
             template = f"""
 Name:           {effective_name}
 Version:        {ver_val}
@@ -151,9 +172,7 @@ rm -rf %{{buildroot}}
 # --- AUTOMATIC FILES START ---
 # --- AUTOMATIC FILES END ---
 
-%changelog
-* {time.strftime("%a %b %d %Y")} RPM Works <builder@example.com> - {ver_val}-{rel_val}
-- Auto-generated build
+{changelog_section}
 """
         else:
             # Update Version and Release in existing template
@@ -167,19 +186,15 @@ rm -rf %{{buildroot}}
             if build_config.release:
                 template = re.sub(r"^(Release:\s*).*$", f"Release:        {rel_val}", template, flags=re.MULTILINE)
 
-            # Add a correct changelog entry at the top of %changelog for raw specs
+            # Replace %changelog with a fully managed section
+            changelog_section = self._build_changelog_section(
+                time.strftime("%a %b %d %Y"), f"{ver_val}-{rel_val}", changelog_message, changelog_history or []
+            )
             if "%changelog" in template:
-                changelog_entry = (
-                    f"* {time.strftime('%a %b %d %Y')} RPM Works <builder@example.com> - "
-                    f"{ver_val}-{rel_val}\n"
-                    f"- Build via RPM Works"
-                )
-                template = re.sub(
-                    r"^(%changelog)\s*\n",
-                    f"\\1\n{changelog_entry}\n\n",
-                    template,
-                    flags=re.MULTILINE
-                )
+                template = re.sub(r'\n%changelog\b.*', '', template, flags=re.DOTALL).rstrip()
+                template += "\n\n" + changelog_section + "\n"
+            else:
+                template += "\n\n" + changelog_section + "\n"
 
         if name_suffix:
             # We need to append the suffix to the Name field in the spec file
@@ -230,8 +245,9 @@ rm -rf %{{buildroot}}
         spec_content = template
         with open(spec_path, 'w') as f:
             f.write(spec_content)
-            
-        return spec_path
+
+        build_evr = f"{ver_val}-{rel_val}"
+        return spec_path, build_evr
 
     def start_build(self, build_id: int, project_id: int, SessionLocal):
         db_session = SessionLocal()
@@ -371,7 +387,40 @@ rm -rf %{{buildroot}}
 
                 # 4. Generate Spec
                 log_msg("Generating SPEC file...")
-                spec_path = self._generate_spec_file(project, project.build_config, build_dir, name_suffix, dist_suffix, remote_val, ts_val)
+
+                # Build changelog history from previous successful builds for same distro
+                changelog_history = []
+                seen_build_numbers = set()
+                prev_builds = db_session.query(Build).filter(
+                    Build.project_id == project_id,
+                    Build.id != new_build.id,
+                    Build.status == "success",
+                    Build.build_evr.isnot(None),
+                    Build.target_distro == new_build.target_distro
+                ).order_by(Build.build_number.desc()).all()
+                for pb in prev_builds:
+                    if pb.build_number in seen_build_numbers:
+                        continue
+                    seen_build_numbers.add(pb.build_number)
+                    try:
+                        dt = time.strptime(pb.started_at, "%Y-%m-%d %H:%M:%S")
+                        date_str = time.strftime("%a %b %d %Y", dt)
+                    except (ValueError, TypeError):
+                        date_str = time.strftime("%a %b %d %Y")
+                    changelog_history.append({
+                        "date": date_str,
+                        "evr": pb.build_evr,
+                        "message": pb.changelog_message,
+                    })
+
+                spec_path, build_evr = self._generate_spec_file(
+                    project, project.build_config, build_dir,
+                    name_suffix, dist_suffix, remote_val, ts_val,
+                    changelog_message=new_build.changelog_message or "",
+                    changelog_history=changelog_history,
+                )
+                new_build.build_evr = build_evr
+                db_session.commit()
                 log_msg(f"SPEC file created at {spec_path}")
                 
                 # 5. Run rpmbuild via Podman
