@@ -32,6 +32,9 @@ debug_log.py
 migrate_db.py
 migrate_multi_distro.py
 migrate_project_ownership.py
+rpmbuild-windows.ps1
+build-fhkassa-server.bat
+build-fhdcorefh.bat
 
 # Container deployment (not part of the RPM-based install)
 Containerfile
