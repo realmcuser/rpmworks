@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Users, Shield, Loader2, AlertCircle, Check, X, FolderTree, Plus, Pencil, Trash2, GripVertical } from 'lucide-react';
-import { fetchUsers, updateUser, fetchAdminSettings, updateAdminSettings, fetchCurrentUser, fetchProjectGroups, createProjectGroup, updateProjectGroup, deleteProjectGroup, fetchProjects, reorderProjects } from '../services/api';
+import { fetchUsers, updateUser, fetchAdminSettings, updateAdminSettings, fetchCurrentUser, fetchProjectGroups, createProjectGroup, updateProjectGroup, deleteProjectGroup, fetchProjects, reorderProjects, reorderProjectGroups } from '../services/api';
 
 const buildSections = (groupsList, projectsList) => {
   const sections = {};
@@ -27,6 +27,7 @@ const Settings = () => {
   const [groupError, setGroupError] = useState(null);
   const [sectionProjects, setSectionProjects] = useState({});
   const [dragItem, setDragItem] = useState(null);
+  const [groupDragIndex, setGroupDragIndex] = useState(null);
 
   useEffect(() => {
     loadData();
@@ -161,6 +162,29 @@ const Settings = () => {
     } catch (err) {
       setGroupError(err.message);
       setSectionProjects(prev => ({ ...prev, [sectionKey]: sectionProjects[sectionKey] }));
+    }
+  };
+
+  const handleGroupDragStart = (index) => {
+    setGroupDragIndex(index);
+  };
+
+  const handleGroupDrop = async (index) => {
+    if (groupDragIndex === null || groupDragIndex === index) {
+      setGroupDragIndex(null);
+      return;
+    }
+    const previous = groups;
+    const items = [...groups];
+    const [moved] = items.splice(groupDragIndex, 1);
+    items.splice(index, 0, moved);
+    setGroupDragIndex(null);
+    setGroups(items);
+    try {
+      await reorderProjectGroups(items.map(g => g.id));
+    } catch (err) {
+      setGroupError(err.message);
+      setGroups(previous);
     }
   };
 
@@ -356,21 +380,30 @@ const Settings = () => {
         <div className="border border-border rounded-lg overflow-hidden mb-4">
           <table className="w-full text-left text-sm">
             <tbody className="divide-y divide-border">
-              {groups.map((group) => (
+              {groups.map((group, groupIndex) => (
                 <React.Fragment key={group.id}>
-                  <tr className="hover:bg-surface-hover transition-colors">
+                  <tr
+                    draggable
+                    onDragStart={() => handleGroupDragStart(groupIndex)}
+                    onDragOver={(e) => e.preventDefault()}
+                    onDrop={() => handleGroupDrop(groupIndex)}
+                    className="hover:bg-surface-hover transition-colors cursor-grab active:cursor-grabbing"
+                  >
                     <td className="px-4 py-3">
-                      {editingGroupId === group.id ? (
-                        <input
-                          type="text"
-                          value={editingGroupName}
-                          onChange={(e) => setEditingGroupName(e.target.value)}
-                          autoFocus
-                          className="bg-background border border-border rounded px-2 py-1 text-text text-sm focus:outline-none focus:border-primary w-full max-w-xs"
-                        />
-                      ) : (
-                        group.name
-                      )}
+                      <div className="flex items-center gap-2">
+                        <GripVertical className="w-4 h-4 text-text-muted shrink-0" />
+                        {editingGroupId === group.id ? (
+                          <input
+                            type="text"
+                            value={editingGroupName}
+                            onChange={(e) => setEditingGroupName(e.target.value)}
+                            autoFocus
+                            className="bg-background border border-border rounded px-2 py-1 text-text text-sm focus:outline-none focus:border-primary w-full max-w-xs"
+                          />
+                        ) : (
+                          group.name
+                        )}
+                      </div>
                     </td>
                     <td className="px-4 py-3 text-right whitespace-nowrap">
                       {editingGroupId === group.id ? (

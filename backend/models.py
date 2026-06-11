@@ -14,6 +14,7 @@ class ProjectGroup(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, unique=True, nullable=False)
+    sort_order = Column(Integer, default=0, nullable=False)
 
 class Project(Base):
     __tablename__ = "projects"

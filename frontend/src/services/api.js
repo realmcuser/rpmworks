@@ -276,6 +276,17 @@ export async function deleteProjectGroup(id) {
   return true;
 }
 
+export async function reorderProjectGroups(groupIds) {
+  const response = await fetchWithAuth('/api/project-groups/reorder', {
+    method: 'PUT',
+    body: JSON.stringify({ group_ids: groupIds }),
+  });
+  if (!response.ok) {
+    throw new Error('Failed to reorder project groups');
+  }
+  return true;
+}
+
 export async function reorderProjects(projectIds) {
   const response = await fetchWithAuth('/api/projects/reorder', {
     method: 'PUT',

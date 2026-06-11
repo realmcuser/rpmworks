@@ -7,7 +7,7 @@ from typing import List, Optional
 from datetime import datetime
 import time
 import os
-from sqlalchemy import text
+from sqlalchemy import text, func
 from sqlalchemy.orm import Session
 from services.ssh_service import SSHService
 from services.rpm_works import RPMWorks
@@ -30,6 +30,7 @@ with engine.connect() as _conn:
     _conn.execute(text("ALTER TABLE builds ADD COLUMN IF NOT EXISTS build_evr VARCHAR"))
     _conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS project_group_id INTEGER REFERENCES project_groups(id) ON DELETE SET NULL"))
     _conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS group_order INTEGER NOT NULL DEFAULT 0"))
+    _conn.execute(text("ALTER TABLE project_groups ADD COLUMN IF NOT EXISTS sort_order INTEGER NOT NULL DEFAULT 0"))
     _conn.commit()
 
 app = FastAPI(title="RPM Works API")
@@ -307,6 +308,7 @@ class ProjectGroupBase(BaseModel):
 
 class ProjectGroup(ProjectGroupBase):
     id: int
+    sort_order: int = 0
 
     class Config:
         from_attributes = True
@@ -631,7 +633,7 @@ async def delete_distribution(distro_id: str, db: Session = Depends(get_db), cur
 
 @app.get("/api/project-groups", response_model=List[ProjectGroup])
 async def get_project_groups(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    return db.query(models.ProjectGroup).order_by(models.ProjectGroup.id).all()
+    return db.query(models.ProjectGroup).order_by(models.ProjectGroup.sort_order.asc(), models.ProjectGroup.id.asc()).all()
 
 @app.post("/api/project-groups", response_model=ProjectGroup)
 async def create_project_group(group: ProjectGroupBase, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_admin)):
@@ -639,11 +641,21 @@ async def create_project_group(group: ProjectGroupBase, db: Session = Depends(ge
     if existing:
         raise HTTPException(status_code=400, detail="Group name already exists")
 
-    db_group = models.ProjectGroup(name=group.name)
+    max_order = db.query(func.max(models.ProjectGroup.sort_order)).scalar() or 0
+    db_group = models.ProjectGroup(name=group.name, sort_order=max_order + 1)
     db.add(db_group)
     db.commit()
     db.refresh(db_group)
     return db_group
+
+class ProjectGroupReorderRequest(BaseModel):
+    group_ids: List[int]
+
+@app.put("/api/project-groups/reorder", status_code=status.HTTP_204_NO_CONTENT)
+async def reorder_project_groups(reorder: ProjectGroupReorderRequest, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_admin)):
+    for idx, gid in enumerate(reorder.group_ids):
+        db.query(models.ProjectGroup).filter(models.ProjectGroup.id == gid).update({"sort_order": idx})
+    db.commit()
 
 @app.put("/api/project-groups/{group_id}", response_model=ProjectGroup)
 async def rename_project_group(group_id: int, group: ProjectGroupBase, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_admin)):
