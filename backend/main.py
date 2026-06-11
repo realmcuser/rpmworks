@@ -29,6 +29,7 @@ with engine.connect() as _conn:
     _conn.execute(text("ALTER TABLE builds ADD COLUMN IF NOT EXISTS changelog_message TEXT"))
     _conn.execute(text("ALTER TABLE builds ADD COLUMN IF NOT EXISTS build_evr VARCHAR"))
     _conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS project_group_id INTEGER REFERENCES project_groups(id) ON DELETE SET NULL"))
+    _conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS group_order INTEGER NOT NULL DEFAULT 0"))
     _conn.commit()
 
 app = FastAPI(title="RPM Works API")
@@ -148,6 +149,7 @@ class Project(ProjectBase):
     notes: Optional[str] = None
     user_id: Optional[int] = None
     project_group_id: Optional[int] = None
+    group_order: int = 0
 
     class Config:
         from_attributes = True
@@ -669,6 +671,15 @@ async def delete_project_group(group_id: int, db: Session = Depends(get_db), cur
     db.commit()
     return None
 
+class ProjectReorderRequest(BaseModel):
+    project_ids: List[int]
+
+@app.put("/api/projects/reorder", status_code=status.HTTP_204_NO_CONTENT)
+async def reorder_projects(reorder: ProjectReorderRequest, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_admin)):
+    for idx, pid in enumerate(reorder.project_ids):
+        db.query(models.Project).filter(models.Project.id == pid).update({"group_order": idx})
+    db.commit()
+
 
 def auto_deploy_build(build, project_id, db):
     """Auto-deploy a successful build to targets with auto_publish=True, using per-distro paths."""
@@ -950,9 +961,9 @@ async def read_users_me(current_user: models.User = Depends(get_current_user)):
 async def get_projects(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     # Admin sees all projects, regular users see only their own
     if current_user.role == "admin":
-        projects = db.query(models.Project).all()
+        projects = db.query(models.Project).order_by(models.Project.group_order.asc(), models.Project.id.asc()).all()
     else:
-        projects = db.query(models.Project).filter(models.Project.user_id == current_user.id).all()
+        projects = db.query(models.Project).filter(models.Project.user_id == current_user.id).order_by(models.Project.group_order.asc(), models.Project.id.asc()).all()
     return projects
 
 @app.post("/api/projects", response_model=Project)

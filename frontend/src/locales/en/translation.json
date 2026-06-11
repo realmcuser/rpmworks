@@ -62,7 +62,8 @@
       "save": "Save",
       "rename": "Rename",
       "delete": "Delete",
-      "noGroups": "No project groups defined."
+      "noGroups": "No project groups defined.",
+      "noProjects": "No projects in this group."
     }
   },
   "fileMapper": {

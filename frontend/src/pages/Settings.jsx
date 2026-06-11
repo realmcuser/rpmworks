@@ -1,7 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Users, Shield, Loader2, AlertCircle, Check, X, FolderTree, Plus, Pencil, Trash2 } from 'lucide-react';
-import { fetchUsers, updateUser, fetchAdminSettings, updateAdminSettings, fetchCurrentUser, fetchProjectGroups, createProjectGroup, updateProjectGroup, deleteProjectGroup } from '../services/api';
+import { Users, Shield, Loader2, AlertCircle, Check, X, FolderTree, Plus, Pencil, Trash2, GripVertical } from 'lucide-react';
+import { fetchUsers, updateUser, fetchAdminSettings, updateAdminSettings, fetchCurrentUser, fetchProjectGroups, createProjectGroup, updateProjectGroup, deleteProjectGroup, fetchProjects, reorderProjects } from '../services/api';
+
+const buildSections = (groupsList, projectsList) => {
+  const sections = {};
+  groupsList.forEach(group => {
+    sections[`group-${group.id}`] = projectsList.filter(p => p.project_group_id === group.id);
+  });
+  sections.ungrouped = projectsList.filter(p => !p.project_group_id);
+  return sections;
+};
 
 const Settings = () => {
   const { t } = useTranslation();
@@ -16,6 +25,8 @@ const Settings = () => {
   const [editingGroupId, setEditingGroupId] = useState(null);
   const [editingGroupName, setEditingGroupName] = useState('');
   const [groupError, setGroupError] = useState(null);
+  const [sectionProjects, setSectionProjects] = useState({});
+  const [dragItem, setDragItem] = useState(null);
 
   useEffect(() => {
     loadData();
@@ -29,14 +40,16 @@ const Settings = () => {
       setCurrentUser(user);
 
       if (user.role === 'admin') {
-        const [usersData, settingsData, groupsData] = await Promise.all([
+        const [usersData, settingsData, groupsData, projectsData] = await Promise.all([
           fetchUsers(),
           fetchAdminSettings(),
-          fetchProjectGroups()
+          fetchProjectGroups(),
+          fetchProjects()
         ]);
         setUsers(usersData);
         setSettings(settingsData);
         setGroups(groupsData);
+        setSectionProjects(buildSections(groupsData, projectsData));
       }
     } catch (err) {
       setError(err.message);
@@ -113,9 +126,66 @@ const Settings = () => {
     try {
       await deleteProjectGroup(group.id);
       setGroups(groups.filter(g => g.id !== group.id));
+      setSectionProjects(prev => {
+        const next = { ...prev };
+        const orphaned = next[`group-${group.id}`] || [];
+        delete next[`group-${group.id}`];
+        next.ungrouped = [...(next.ungrouped || []), ...orphaned];
+        return next;
+      });
     } catch (err) {
       setGroupError(err.message);
     }
+  };
+
+  const handleDragStart = (sectionKey, index) => {
+    setDragItem({ sectionKey, index });
+  };
+
+  const handleDragOver = (e) => {
+    e.preventDefault();
+  };
+
+  const handleDrop = async (sectionKey, index) => {
+    if (!dragItem || dragItem.sectionKey !== sectionKey || dragItem.index === index) {
+      setDragItem(null);
+      return;
+    }
+    const items = [...sectionProjects[sectionKey]];
+    const [moved] = items.splice(dragItem.index, 1);
+    items.splice(index, 0, moved);
+    setDragItem(null);
+    setSectionProjects(prev => ({ ...prev, [sectionKey]: items }));
+    try {
+      await reorderProjects(items.map(p => p.id));
+    } catch (err) {
+      setGroupError(err.message);
+      setSectionProjects(prev => ({ ...prev, [sectionKey]: sectionProjects[sectionKey] }));
+    }
+  };
+
+  const renderProjectList = (sectionKey) => {
+    const items = sectionProjects[sectionKey] || [];
+    if (items.length === 0) {
+      return <p className="text-sm text-text-muted italic">{t('settings.projectGroups.noProjects')}</p>;
+    }
+    return (
+      <ul className="space-y-1">
+        {items.map((project, index) => (
+          <li
+            key={project.id}
+            draggable
+            onDragStart={() => handleDragStart(sectionKey, index)}
+            onDragOver={handleDragOver}
+            onDrop={() => handleDrop(sectionKey, index)}
+            className="flex items-center gap-2 px-2 py-1.5 bg-background border border-border rounded text-sm text-text cursor-grab active:cursor-grabbing"
+          >
+            <GripVertical className="w-4 h-4 text-text-muted shrink-0" />
+            <span className="truncate">{project.name}</span>
+          </li>
+        ))}
+      </ul>
+    );
   };
 
   if (loading) {
@@ -287,46 +357,53 @@ const Settings = () => {
           <table className="w-full text-left text-sm">
             <tbody className="divide-y divide-border">
               {groups.map((group) => (
-                <tr key={group.id} className="hover:bg-surface-hover transition-colors">
-                  <td className="px-4 py-3">
-                    {editingGroupId === group.id ? (
-                      <input
-                        type="text"
-                        value={editingGroupName}
-                        onChange={(e) => setEditingGroupName(e.target.value)}
-                        autoFocus
-                        className="bg-background border border-border rounded px-2 py-1 text-text text-sm focus:outline-none focus:border-primary w-full max-w-xs"
-                      />
-                    ) : (
-                      group.name
-                    )}
-                  </td>
-                  <td className="px-4 py-3 text-right whitespace-nowrap">
-                    {editingGroupId === group.id ? (
+                <React.Fragment key={group.id}>
+                  <tr className="hover:bg-surface-hover transition-colors">
+                    <td className="px-4 py-3">
+                      {editingGroupId === group.id ? (
+                        <input
+                          type="text"
+                          value={editingGroupName}
+                          onChange={(e) => setEditingGroupName(e.target.value)}
+                          autoFocus
+                          className="bg-background border border-border rounded px-2 py-1 text-text text-sm focus:outline-none focus:border-primary w-full max-w-xs"
+                        />
+                      ) : (
+                        group.name
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-right whitespace-nowrap">
+                      {editingGroupId === group.id ? (
+                        <button
+                          onClick={() => handleSaveGroup(group)}
+                          className="px-3 py-1 rounded text-xs font-medium bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
+                        >
+                          <Check className="w-3.5 h-3.5 inline" /> {t('settings.projectGroups.save')}
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => handleStartEditGroup(group)}
+                          className="p-1.5 text-text-muted hover:text-primary hover:bg-primary/10 rounded-md transition-colors mr-1"
+                          title={t('settings.projectGroups.rename')}
+                        >
+                          <Pencil className="w-4 h-4" />
+                        </button>
+                      )}
                       <button
-                        onClick={() => handleSaveGroup(group)}
-                        className="px-3 py-1 rounded text-xs font-medium bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
+                        onClick={() => handleDeleteGroup(group)}
+                        className="p-1.5 text-text-muted hover:text-red-400 hover:bg-red-400/10 rounded-md transition-colors"
+                        title={t('settings.projectGroups.delete')}
                       >
-                        <Check className="w-3.5 h-3.5 inline" /> {t('settings.projectGroups.save')}
+                        <Trash2 className="w-4 h-4" />
                       </button>
-                    ) : (
-                      <button
-                        onClick={() => handleStartEditGroup(group)}
-                        className="p-1.5 text-text-muted hover:text-primary hover:bg-primary/10 rounded-md transition-colors mr-1"
-                        title={t('settings.projectGroups.rename')}
-                      >
-                        <Pencil className="w-4 h-4" />
-                      </button>
-                    )}
-                    <button
-                      onClick={() => handleDeleteGroup(group)}
-                      className="p-1.5 text-text-muted hover:text-red-400 hover:bg-red-400/10 rounded-md transition-colors"
-                      title={t('settings.projectGroups.delete')}
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </td>
-                </tr>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td colSpan="2" className="px-4 pb-3 pt-0">
+                      {renderProjectList(`group-${group.id}`)}
+                    </td>
+                  </tr>
+                </React.Fragment>
               ))}
               {groups.length === 0 && (
                 <tr>
@@ -334,6 +411,20 @@ const Settings = () => {
                     {t('settings.projectGroups.noGroups')}
                   </td>
                 </tr>
+              )}
+              {(sectionProjects.ungrouped || []).length > 0 && (
+                <>
+                  <tr className="hover:bg-surface-hover transition-colors">
+                    <td colSpan="2" className="px-4 py-3 text-text-muted">
+                      {t('dashboard.ungrouped')}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td colSpan="2" className="px-4 pb-3 pt-0">
+                      {renderProjectList('ungrouped')}
+                    </td>
+                  </tr>
+                </>
               )}
             </tbody>
           </table>

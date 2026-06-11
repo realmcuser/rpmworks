@@ -62,7 +62,8 @@
       "save": "Spara",
       "rename": "Byt namn",
       "delete": "Ta bort",
-      "noGroups": "Inga projektgrupper definierade."
+      "noGroups": "Inga projektgrupper definierade.",
+      "noProjects": "Inga projekt i denna grupp."
     }
   },
   "fileMapper": {
