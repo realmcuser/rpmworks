@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Plus, GitBranch, Clock, ArrowRight, Loader2, Trash2, Check } from 'lucide-react';
-import { fetchProjects, deleteProject } from '../services/api';
+import { fetchProjects, deleteProject, fetchProjectGroups } from '../services/api';
 
 const ProjectCard = ({ name, description, lastBuild, status, onClick, onDelete, onDeleteConfirm, confirmingDelete, t }) => (
   <div onClick={onClick} className="bg-surface border border-border rounded-xl p-5 hover:border-primary/50 transition-colors group cursor-pointer shadow-lg shadow-black/20 relative">
@@ -59,6 +59,7 @@ const Dashboard = () => {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const [projects, setProjects] = useState([]);
+  const [groups, setGroups] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
   const [confirmingDeleteId, setConfirmingDeleteId] = useState(null);
@@ -67,8 +68,12 @@ const Dashboard = () => {
   useEffect(() => {
     const loadProjects = async () => {
       try {
-        const data = await fetchProjects();
-        setProjects(data);
+        const [projectsData, groupsData] = await Promise.all([
+          fetchProjects(),
+          fetchProjectGroups()
+        ]);
+        setProjects(projectsData);
+        setGroups(groupsData);
       } catch (err) {
         setError(t('dashboard.loadError'));
       } finally {
@@ -143,8 +148,8 @@ const Dashboard = () => {
         </div>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {projects.map(project => (
+      {(() => {
+        const renderCard = (project) => (
           <ProjectCard
             key={project.id}
             name={project.name}
@@ -157,19 +162,54 @@ const Dashboard = () => {
             confirmingDelete={confirmingDeleteId === project.id}
             t={t}
           />
-        ))}
+        );
 
-        {/* Empty State / Add New Placeholder */}
-        <div
-          onClick={() => navigate('/projects/new')}
-          className="border-2 border-dashed border-border rounded-xl p-5 flex flex-col items-center justify-center text-text-muted hover:text-primary hover:border-primary/50 hover:bg-surface/50 transition-all cursor-pointer group min-h-[240px]"
-        >
-          <div className="w-12 h-12 rounded-full bg-surface border border-border flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-            <Plus className="w-6 h-6" />
+        const addPlaceholder = (
+          <div
+            key="add-placeholder"
+            onClick={() => navigate('/projects/new')}
+            className="border-2 border-dashed border-border rounded-xl p-5 flex flex-col items-center justify-center text-text-muted hover:text-primary hover:border-primary/50 hover:bg-surface/50 transition-all cursor-pointer group min-h-[240px]"
+          >
+            <div className="w-12 h-12 rounded-full bg-surface border border-border flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+              <Plus className="w-6 h-6" />
+            </div>
+            <p className="font-medium">{t('dashboard.createNewProject')}</p>
           </div>
-          <p className="font-medium">{t('dashboard.createNewProject')}</p>
-        </div>
-      </div>
+        );
+
+        if (groups.length === 0) {
+          return (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {projects.map(renderCard)}
+              {addPlaceholder}
+            </div>
+          );
+        }
+
+        const ungrouped = projects.filter(p => !p.project_group_id);
+        const sections = [
+          ...groups.map(group => ({
+            key: `group-${group.id}`,
+            title: group.name,
+            items: projects.filter(p => p.project_group_id === group.id)
+          })),
+          { key: 'ungrouped', title: t('dashboard.ungrouped'), items: ungrouped }
+        ].filter(section => section.items.length > 0 || section.key === 'ungrouped');
+
+        return (
+          <div className="space-y-10">
+            {sections.map((section, idx) => (
+              <div key={section.key}>
+                <h3 className="text-lg font-semibold text-text-muted mb-4">{section.title}</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {section.items.map(renderCard)}
+                  {idx === sections.length - 1 && addPlaceholder}
+                </div>
+              </div>
+            ))}
+          </div>
+        );
+      })()}
     </div>
   );
 };

@@ -13,7 +13,8 @@
     "neverBuilt": "Aldrig byggt",
     "confirmDelete": "Bekräfta borttagning",
     "deleteError": "Det gick inte att ta bort projektet. Försök igen.",
-    "loadError": "Kunde inte ladda projekt. Körs backend?"
+    "loadError": "Kunde inte ladda projekt. Körs backend?",
+    "ungrouped": "Ej grupperade"
   },
   "sidebar": {
     "projects": "Projekt",
@@ -51,7 +52,16 @@
     "activate": "Aktivera",
     "deactivate": "Inaktivera",
     "you": "du",
-    "noUsers": "Inga användare hittades."
+    "noUsers": "Inga användare hittades.",
+    "projectGroups": {
+      "title": "Projektgrupper",
+      "addPlaceholder": "Nytt gruppnamn",
+      "add": "Lägg till",
+      "save": "Spara",
+      "rename": "Byt namn",
+      "delete": "Ta bort",
+      "noGroups": "Inga projektgrupper definierade."
+    }
   },
   "fileMapper": {
     "title": "Filmappning",
@@ -93,6 +103,8 @@
     "details": "Projektdetaljer",
     "name": "Projektnamn",
     "description": "Beskrivning",
+    "group": "Grupp",
+    "noGroup": "— Ingen grupp —",
     "createdAt": "Skapat",
     "retentionPolicy": "Bevarandepolicy (Max antal byggen)",
     "sourceHost": "Källvärd",

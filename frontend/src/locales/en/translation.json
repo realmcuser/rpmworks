@@ -13,7 +13,8 @@
     "neverBuilt": "Never built",
     "confirmDelete": "Confirm delete",
     "deleteError": "Failed to delete project. Please try again.",
-    "loadError": "Failed to load projects. Is the backend running?"
+    "loadError": "Failed to load projects. Is the backend running?",
+    "ungrouped": "Ungrouped"
   },
   "sidebar": {
     "projects": "Projects",
@@ -51,7 +52,16 @@
     "activate": "Activate",
     "deactivate": "Deactivate",
     "you": "you",
-    "noUsers": "No users found."
+    "noUsers": "No users found.",
+    "projectGroups": {
+      "title": "Project Groups",
+      "addPlaceholder": "New group name",
+      "add": "Add",
+      "save": "Save",
+      "rename": "Rename",
+      "delete": "Delete",
+      "noGroups": "No project groups defined."
+    }
   },
   "fileMapper": {
     "title": "File Mapping",
@@ -93,6 +103,8 @@
     "details": "Project Details",
     "name": "Project Name",
     "description": "Description",
+    "group": "Group",
+    "noGroup": "— No group —",
     "createdAt": "Created At",
     "retentionPolicy": "Retention Policy (Max Builds)",
     "sourceHost": "Source Host",

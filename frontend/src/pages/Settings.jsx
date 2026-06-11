@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Users, Shield, Loader2, AlertCircle, Check, X } from 'lucide-react';
-import { fetchUsers, updateUser, fetchAdminSettings, updateAdminSettings, fetchCurrentUser } from '../services/api';
+import { Users, Shield, Loader2, AlertCircle, Check, X, FolderTree, Plus, Pencil, Trash2 } from 'lucide-react';
+import { fetchUsers, updateUser, fetchAdminSettings, updateAdminSettings, fetchCurrentUser, fetchProjectGroups, createProjectGroup, updateProjectGroup, deleteProjectGroup } from '../services/api';
 
 const Settings = () => {
   const { t } = useTranslation();
@@ -11,6 +11,11 @@ const Settings = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [groups, setGroups] = useState([]);
+  const [newGroupName, setNewGroupName] = useState('');
+  const [editingGroupId, setEditingGroupId] = useState(null);
+  const [editingGroupName, setEditingGroupName] = useState('');
+  const [groupError, setGroupError] = useState(null);
 
   useEffect(() => {
     loadData();
@@ -24,12 +29,14 @@ const Settings = () => {
       setCurrentUser(user);
 
       if (user.role === 'admin') {
-        const [usersData, settingsData] = await Promise.all([
+        const [usersData, settingsData, groupsData] = await Promise.all([
           fetchUsers(),
-          fetchAdminSettings()
+          fetchAdminSettings(),
+          fetchProjectGroups()
         ]);
         setUsers(usersData);
         setSettings(settingsData);
+        setGroups(groupsData);
       }
     } catch (err) {
       setError(err.message);
@@ -66,6 +73,48 @@ const Settings = () => {
       setUsers(users.map(u => u.id === user.id ? updated : u));
     } catch (err) {
       alert(err.message);
+    }
+  };
+
+  const handleAddGroup = async () => {
+    const name = newGroupName.trim();
+    if (!name) return;
+    setGroupError(null);
+    try {
+      const created = await createProjectGroup(name);
+      setGroups([...groups, created]);
+      setNewGroupName('');
+    } catch (err) {
+      setGroupError(err.message);
+    }
+  };
+
+  const handleStartEditGroup = (group) => {
+    setEditingGroupId(group.id);
+    setEditingGroupName(group.name);
+    setGroupError(null);
+  };
+
+  const handleSaveGroup = async (group) => {
+    const name = editingGroupName.trim();
+    if (!name) return;
+    setGroupError(null);
+    try {
+      const updated = await updateProjectGroup(group.id, name);
+      setGroups(groups.map(g => g.id === group.id ? updated : g));
+      setEditingGroupId(null);
+    } catch (err) {
+      setGroupError(err.message);
+    }
+  };
+
+  const handleDeleteGroup = async (group) => {
+    setGroupError(null);
+    try {
+      await deleteProjectGroup(group.id);
+      setGroups(groups.filter(g => g.id !== group.id));
+    } catch (err) {
+      setGroupError(err.message);
     }
   };
 
@@ -218,6 +267,94 @@ const Settings = () => {
               )}
             </tbody>
           </table>
+        </div>
+      </div>
+
+      {/* Project Groups */}
+      <div className="bg-surface border border-border rounded-xl p-6">
+        <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+          <FolderTree className="w-5 h-5" />
+          {t('settings.projectGroups.title')}
+        </h3>
+
+        {groupError && (
+          <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400 text-sm">
+            {groupError}
+          </div>
+        )}
+
+        <div className="border border-border rounded-lg overflow-hidden mb-4">
+          <table className="w-full text-left text-sm">
+            <tbody className="divide-y divide-border">
+              {groups.map((group) => (
+                <tr key={group.id} className="hover:bg-surface-hover transition-colors">
+                  <td className="px-4 py-3">
+                    {editingGroupId === group.id ? (
+                      <input
+                        type="text"
+                        value={editingGroupName}
+                        onChange={(e) => setEditingGroupName(e.target.value)}
+                        autoFocus
+                        className="bg-background border border-border rounded px-2 py-1 text-text text-sm focus:outline-none focus:border-primary w-full max-w-xs"
+                      />
+                    ) : (
+                      group.name
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-right whitespace-nowrap">
+                    {editingGroupId === group.id ? (
+                      <button
+                        onClick={() => handleSaveGroup(group)}
+                        className="px-3 py-1 rounded text-xs font-medium bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
+                      >
+                        <Check className="w-3.5 h-3.5 inline" /> {t('settings.projectGroups.save')}
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => handleStartEditGroup(group)}
+                        className="p-1.5 text-text-muted hover:text-primary hover:bg-primary/10 rounded-md transition-colors mr-1"
+                        title={t('settings.projectGroups.rename')}
+                      >
+                        <Pencil className="w-4 h-4" />
+                      </button>
+                    )}
+                    <button
+                      onClick={() => handleDeleteGroup(group)}
+                      className="p-1.5 text-text-muted hover:text-red-400 hover:bg-red-400/10 rounded-md transition-colors"
+                      title={t('settings.projectGroups.delete')}
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+              {groups.length === 0 && (
+                <tr>
+                  <td colSpan="2" className="px-4 py-8 text-center text-text-muted">
+                    {t('settings.projectGroups.noGroups')}
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={newGroupName}
+            onChange={(e) => setNewGroupName(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleAddGroup()}
+            placeholder={t('settings.projectGroups.addPlaceholder')}
+            className="flex-1 bg-background border border-border rounded px-3 py-1.5 text-text text-sm focus:outline-none focus:border-primary"
+          />
+          <button
+            onClick={handleAddGroup}
+            className="flex items-center gap-1 px-3 py-1.5 bg-primary hover:bg-primary-hover text-white rounded-lg text-sm font-medium transition-colors"
+          >
+            <Plus className="w-4 h-4" />
+            {t('settings.projectGroups.add')}
+          </button>
         </div>
       </div>
     </div>

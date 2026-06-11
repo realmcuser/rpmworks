@@ -9,6 +9,12 @@ project_distributions = Table(
     Column('distribution_id', String, ForeignKey('distributions.id', ondelete='CASCADE'), primary_key=True)
 )
 
+class ProjectGroup(Base):
+    __tablename__ = "project_groups"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, nullable=False)
+
 class Project(Base):
     __tablename__ = "projects"
 
@@ -21,6 +27,7 @@ class Project(Base):
     max_builds = Column(Integer, default=10)
     notes = Column(Text, nullable=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True)  # Project owner
+    project_group_id = Column(Integer, ForeignKey("project_groups.id", ondelete="SET NULL"), nullable=True)
 
     # Relationships
     owner = relationship("User", back_populates="projects")

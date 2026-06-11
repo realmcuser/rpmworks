@@ -234,6 +234,48 @@ export async function deleteDistribution(id) {
   return true;
 }
 
+export async function fetchProjectGroups() {
+  const response = await fetchWithAuth('/api/project-groups');
+  if (!response.ok) {
+    throw new Error('Failed to fetch project groups');
+  }
+  return response.json();
+}
+
+export async function createProjectGroup(name) {
+  const response = await fetchWithAuth('/api/project-groups', {
+    method: 'POST',
+    body: JSON.stringify({ name }),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || 'Failed to create project group');
+  }
+  return response.json();
+}
+
+export async function updateProjectGroup(id, name) {
+  const response = await fetchWithAuth(`/api/project-groups/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify({ name }),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || 'Failed to update project group');
+  }
+  return response.json();
+}
+
+export async function deleteProjectGroup(id) {
+  const response = await fetchWithAuth(`/api/project-groups/${id}`, {
+    method: 'DELETE',
+  });
+  if (!response.ok) {
+    throw new Error('Failed to delete project group');
+  }
+  return true;
+}
+
 export async function updateProjectDetails(projectId, details) {
   const response = await fetchWithAuth(`/api/projects/${projectId}`, {
     method: 'PUT',

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { ArrowLeft, Server, Box, Activity, Settings, Terminal, Play, Save, Download, ChevronDown, ChevronUp, Edit2, X, Check, Trash2, Copy, AlertTriangle, Key, FileText, Loader2 } from 'lucide-react';
-import { fetchWithAuth, startBuild, updateProjectDetails, deleteBuild, updateSourceConfig, cloneProject, runPrefetchScript } from '../services/api';
+import { fetchWithAuth, startBuild, updateProjectDetails, deleteBuild, updateSourceConfig, cloneProject, runPrefetchScript, fetchProjectGroups } from '../services/api';
 import SourceBrowserModal from '../components/SourceManager/SourceBrowserModal';
 import SpecEditor from '../components/BuildManager/SpecEditor';
 import FileMapper from '../components/BuildManager/FileMapper';
@@ -43,7 +43,8 @@ const ProjectDetails = () => {
   
   // Edit state for overview
   const [isEditing, setIsEditing] = useState(false);
-  const [editForm, setEditForm] = useState({ name: '', description: '', max_builds: 10 });
+  const [editForm, setEditForm] = useState({ name: '', description: '', max_builds: 10, project_group_id: null });
+  const [projectGroups, setProjectGroups] = useState([]);
 
   // Edit state for Source tab
   const [sourceEditMode, setSourceEditMode] = useState(false);
@@ -80,6 +81,7 @@ const ProjectDetails = () => {
 
   useEffect(() => {
     loadProject();
+    fetchProjectGroups().then(setProjectGroups).catch(console.error);
   }, [id]);
 
   // Polling for running builds
@@ -104,10 +106,11 @@ const ProjectDetails = () => {
 
   useEffect(() => {
     if (project) {
-        setEditForm({ 
-            name: project.name, 
+        setEditForm({
+            name: project.name,
             description: project.description || '',
-            max_builds: project.max_builds || 10
+            max_builds: project.max_builds || 10,
+            project_group_id: project.project_group_id || null
         });
         setNotesText(project.notes || '');
         setSourceForm({
@@ -161,11 +164,12 @@ const ProjectDetails = () => {
   const handleSaveDetails = async () => {
       try {
           const updated = await updateProjectDetails(project.id, editForm);
-          setProject(prev => ({ 
-              ...prev, 
-              name: updated.name, 
+          setProject(prev => ({
+              ...prev,
+              name: updated.name,
               description: updated.description,
-              max_builds: updated.max_builds
+              max_builds: updated.max_builds,
+              project_group_id: updated.project_group_id
           }));
           setIsEditing(false);
       } catch (err) {
@@ -480,6 +484,25 @@ const ProjectDetails = () => {
                       />
                   ) : (
                     <p className="text-text">{project.description || '-'}</p>
+                  )}
+                </div>
+                <div>
+                  <label className="text-sm text-text-muted">{t('project.group')}</label>
+                  {isEditing ? (
+                      <select
+                        value={editForm.project_group_id ?? ''}
+                        onChange={(e) => setEditForm(prev => ({ ...prev, project_group_id: e.target.value ? parseInt(e.target.value) : null }))}
+                        className="w-full mt-1 bg-background border border-border rounded px-3 py-1.5 text-text focus:outline-none focus:border-primary"
+                      >
+                        <option value="">{t('project.noGroup')}</option>
+                        {projectGroups.map(group => (
+                          <option key={group.id} value={group.id}>{group.name}</option>
+                        ))}
+                      </select>
+                  ) : (
+                    <p className="text-text">
+                      {projectGroups.find(g => g.id === project.project_group_id)?.name || t('project.noGroup')}
+                    </p>
                   )}
                 </div>
                 <div>

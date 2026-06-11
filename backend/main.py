@@ -28,6 +28,7 @@ with engine.connect() as _conn:
     _conn.execute(text("ALTER TABLE build_configs ADD COLUMN IF NOT EXISTS inject_changelog BOOLEAN DEFAULT FALSE"))
     _conn.execute(text("ALTER TABLE builds ADD COLUMN IF NOT EXISTS changelog_message TEXT"))
     _conn.execute(text("ALTER TABLE builds ADD COLUMN IF NOT EXISTS build_evr VARCHAR"))
+    _conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS project_group_id INTEGER REFERENCES project_groups(id) ON DELETE SET NULL"))
     _conn.commit()
 
 app = FastAPI(title="RPM Works API")
@@ -129,6 +130,7 @@ class ProjectUpdate(BaseModel):
     description: Optional[str] = None
     max_builds: Optional[int] = None
     notes: Optional[str] = None
+    project_group_id: Optional[int] = None
 
 class ProjectCreate(ProjectBase):
     host: str
@@ -145,6 +147,7 @@ class Project(ProjectBase):
     max_builds: int = 10
     notes: Optional[str] = None
     user_id: Optional[int] = None
+    project_group_id: Optional[int] = None
 
     class Config:
         from_attributes = True
@@ -294,6 +297,15 @@ class DistributionBase(BaseModel):
     dist_suffix: Optional[str] = None
 
 class Distribution(DistributionBase):
+    class Config:
+        from_attributes = True
+
+class ProjectGroupBase(BaseModel):
+    name: str
+
+class ProjectGroup(ProjectGroupBase):
+    id: int
+
     class Config:
         from_attributes = True
 
@@ -609,8 +621,51 @@ async def delete_distribution(distro_id: str, db: Session = Depends(get_db), cur
     db_distro = db.query(models.Distribution).filter(models.Distribution.id == distro_id).first()
     if not db_distro:
         raise HTTPException(status_code=404, detail="Distribution not found")
-    
+
     db.delete(db_distro)
+    db.commit()
+
+# Project Group Endpoints
+
+@app.get("/api/project-groups", response_model=List[ProjectGroup])
+async def get_project_groups(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    return db.query(models.ProjectGroup).order_by(models.ProjectGroup.id).all()
+
+@app.post("/api/project-groups", response_model=ProjectGroup)
+async def create_project_group(group: ProjectGroupBase, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_admin)):
+    existing = db.query(models.ProjectGroup).filter(models.ProjectGroup.name == group.name).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Group name already exists")
+
+    db_group = models.ProjectGroup(name=group.name)
+    db.add(db_group)
+    db.commit()
+    db.refresh(db_group)
+    return db_group
+
+@app.put("/api/project-groups/{group_id}", response_model=ProjectGroup)
+async def rename_project_group(group_id: int, group: ProjectGroupBase, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_admin)):
+    db_group = db.query(models.ProjectGroup).filter(models.ProjectGroup.id == group_id).first()
+    if not db_group:
+        raise HTTPException(status_code=404, detail="Group not found")
+
+    if group.name != db_group.name:
+        existing = db.query(models.ProjectGroup).filter(models.ProjectGroup.name == group.name).first()
+        if existing:
+            raise HTTPException(status_code=400, detail="Group name already exists")
+
+    db_group.name = group.name
+    db.commit()
+    db.refresh(db_group)
+    return db_group
+
+@app.delete("/api/project-groups/{group_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_project_group(group_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_admin)):
+    db_group = db.query(models.ProjectGroup).filter(models.ProjectGroup.id == group_id).first()
+    if not db_group:
+        raise HTTPException(status_code=404, detail="Group not found")
+
+    db.delete(db_group)
     db.commit()
     return None
 
@@ -997,6 +1052,13 @@ async def update_project(project_id: int, project_update: ProjectUpdate, db: Ses
 
     if project_update.notes is not None:
         project.notes = project_update.notes
+
+    if "project_group_id" in project_update.model_fields_set:
+        if project_update.project_group_id is not None:
+            group = db.query(models.ProjectGroup).filter(models.ProjectGroup.id == project_update.project_group_id).first()
+            if not group:
+                raise HTTPException(status_code=404, detail="Project group not found")
+        project.project_group_id = project_update.project_group_id
 
     db.commit()
     db.refresh(project)
