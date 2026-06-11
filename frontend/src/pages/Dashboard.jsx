@@ -1,10 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Plus, GitBranch, Clock, ArrowRight, Loader2, Trash2, Check, LayoutGrid, List } from 'lucide-react';
-import { fetchProjects, deleteProject, fetchProjectGroups } from '../services/api';
+import { Plus, GitBranch, Clock, ArrowRight, Loader2, Trash2, Check, LayoutGrid, List, Play } from 'lucide-react';
+import { fetchProjects, deleteProject, fetchProjectGroups, startBuild } from '../services/api';
 
-const ProjectCard = ({ name, description, lastBuild, status, onClick, onDelete, onDeleteConfirm, confirmingDelete, t }) => (
+const ProjectCard = ({ name, description, lastBuild, status, onClick, onDelete, onDeleteConfirm, confirmingDelete, onBuildNow, isBuilding, t }) => {
+  const buildDisabled = isBuilding || status === 'running' || status === 'pending';
+  return (
   <div onClick={onClick} className="bg-surface border border-border rounded-xl p-5 hover:border-primary/50 transition-colors group cursor-pointer shadow-lg shadow-black/20 relative">
     <div className="flex justify-between items-start mb-4">
       <div className="p-2 bg-background rounded-lg border border-border group-hover:border-primary/30 transition-colors">
@@ -43,7 +45,18 @@ const ProjectCard = ({ name, description, lastBuild, status, onClick, onDelete, 
     </div>
 
     <h3 className="text-lg font-semibold mb-2 group-hover:text-primary transition-colors">{name}</h3>
-    <p className="text-text-muted text-sm mb-6 line-clamp-2">{description || t('dashboard.noDescription')}</p>
+    <p className="text-text-muted text-sm mb-4 line-clamp-2">{description || t('dashboard.noDescription')}</p>
+
+    <button
+      onClick={onBuildNow}
+      disabled={buildDisabled}
+      className="w-full flex items-center justify-center gap-2 px-3 py-2 mb-4 bg-primary/10 hover:bg-primary/20 text-primary rounded-lg text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed z-10"
+    >
+      {isBuilding || status === 'running' || status === 'pending'
+        ? <Loader2 className="w-4 h-4 animate-spin" />
+        : <Play className="w-4 h-4" />}
+      {t('project.buildNow')}
+    </button>
 
     <div className="flex items-center justify-between text-xs text-text-muted border-t border-border pt-4">
       <div className="flex items-center gap-2">
@@ -53,9 +66,12 @@ const ProjectCard = ({ name, description, lastBuild, status, onClick, onDelete, 
       <ArrowRight className="w-4 h-4 opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all text-primary" />
     </div>
   </div>
-);
+  );
+};
 
-const ProjectListItem = ({ name, description, lastBuild, status, onClick, onDelete, onDeleteConfirm, confirmingDelete, t }) => (
+const ProjectListItem = ({ name, description, lastBuild, status, onClick, onDelete, onDeleteConfirm, confirmingDelete, onBuildNow, isBuilding, t }) => {
+  const buildDisabled = isBuilding || status === 'running' || status === 'pending';
+  return (
   <div onClick={onClick} className="bg-surface border border-border rounded-xl px-5 py-3 hover:border-primary/50 transition-colors group cursor-pointer shadow-lg shadow-black/20 relative">
     <div className="flex items-center gap-4">
       <div className="p-2 bg-background rounded-lg border border-border group-hover:border-primary/30 transition-colors shrink-0">
@@ -75,6 +91,16 @@ const ProjectListItem = ({ name, description, lastBuild, status, onClick, onDele
                status === 'failed' ? t('dashboard.buildFailed') :
                status === 'running' ? t('dashboard.building') : t('dashboard.pending')}
             </span>
+            <button
+              onClick={onBuildNow}
+              disabled={buildDisabled}
+              className="flex items-center gap-1.5 px-2.5 py-1 bg-primary/10 hover:bg-primary/20 text-primary rounded-md text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed z-10"
+            >
+              {isBuilding || status === 'running' || status === 'pending'
+                ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                : <Play className="w-3.5 h-3.5" />}
+              {t('project.buildNow')}
+            </button>
             {confirmingDelete ? (
               <button
                 onClick={onDeleteConfirm}
@@ -106,7 +132,8 @@ const ProjectListItem = ({ name, description, lastBuild, status, onClick, onDele
       </div>
     </div>
   </div>
-);
+  );
+};
 
 const Dashboard = () => {
   const { t } = useTranslation();
@@ -118,6 +145,8 @@ const Dashboard = () => {
   const [confirmingDeleteId, setConfirmingDeleteId] = useState(null);
   const [deleteError, setDeleteError] = useState(null);
   const [viewMode, setViewMode] = useState(() => localStorage.getItem('dashboard-view-mode') || 'grid');
+  const [buildingIds, setBuildingIds] = useState(new Set());
+  const [buildError, setBuildError] = useState(null);
 
   const handleSetViewMode = (mode) => {
     setViewMode(mode);
@@ -166,6 +195,25 @@ const Dashboard = () => {
     } catch (err) {
       console.error("Failed to delete project:", err);
       setDeleteError(t('dashboard.deleteError'));
+    }
+  };
+
+  const handleBuildNow = async (e, projectId) => {
+    e.stopPropagation();
+    setBuildError(null);
+    setBuildingIds(prev => new Set(prev).add(projectId));
+    try {
+      await startBuild(projectId);
+      setProjects(prev => prev.map(p => p.id === projectId ? { ...p, status: 'running' } : p));
+    } catch (err) {
+      console.error("Failed to start build:", err);
+      setBuildError(t('project.builds.startFailed'));
+    } finally {
+      setBuildingIds(prev => {
+        const next = new Set(prev);
+        next.delete(projectId);
+        return next;
+      });
     }
   };
 
@@ -225,6 +273,12 @@ const Dashboard = () => {
         </div>
       )}
 
+      {buildError && (
+        <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400 text-sm">
+          {buildError}
+        </div>
+      )}
+
       {(() => {
         const ItemComponent = viewMode === 'list' ? ProjectListItem : ProjectCard;
 
@@ -239,6 +293,8 @@ const Dashboard = () => {
             onDelete={(e) => handleDeleteClick(e, project.id)}
             onDeleteConfirm={(e) => handleDeleteConfirm(e, project.id)}
             confirmingDelete={confirmingDeleteId === project.id}
+            onBuildNow={(e) => handleBuildNow(e, project.id)}
+            isBuilding={buildingIds.has(project.id)}
             t={t}
           />
         );
