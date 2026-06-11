@@ -14,7 +14,9 @@
     "confirmDelete": "Bekräfta borttagning",
     "deleteError": "Det gick inte att ta bort projektet. Försök igen.",
     "loadError": "Kunde inte ladda projekt. Körs backend?",
-    "ungrouped": "Ej grupperade"
+    "ungrouped": "Ej grupperade",
+    "gridView": "Rutnätsvy",
+    "listView": "Listvy"
   },
   "sidebar": {
     "projects": "Projekt",

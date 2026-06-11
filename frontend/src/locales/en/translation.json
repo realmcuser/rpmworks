@@ -14,7 +14,9 @@
     "confirmDelete": "Confirm delete",
     "deleteError": "Failed to delete project. Please try again.",
     "loadError": "Failed to load projects. Is the backend running?",
-    "ungrouped": "Ungrouped"
+    "ungrouped": "Ungrouped",
+    "gridView": "Grid view",
+    "listView": "List view"
   },
   "sidebar": {
     "projects": "Projects",

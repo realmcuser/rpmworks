@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Plus, GitBranch, Clock, ArrowRight, Loader2, Trash2, Check } from 'lucide-react';
+import { Plus, GitBranch, Clock, ArrowRight, Loader2, Trash2, Check, LayoutGrid, List } from 'lucide-react';
 import { fetchProjects, deleteProject, fetchProjectGroups } from '../services/api';
 
 const ProjectCard = ({ name, description, lastBuild, status, onClick, onDelete, onDeleteConfirm, confirmingDelete, t }) => (
@@ -55,6 +55,59 @@ const ProjectCard = ({ name, description, lastBuild, status, onClick, onDelete, 
   </div>
 );
 
+const ProjectListItem = ({ name, description, lastBuild, status, onClick, onDelete, onDeleteConfirm, confirmingDelete, t }) => (
+  <div onClick={onClick} className="bg-surface border border-border rounded-xl px-5 py-3 hover:border-primary/50 transition-colors group cursor-pointer shadow-lg shadow-black/20 relative">
+    <div className="flex items-center gap-4">
+      <div className="p-2 bg-background rounded-lg border border-border group-hover:border-primary/30 transition-colors shrink-0">
+        <GitBranch className="w-5 h-5 text-primary" />
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center justify-between gap-4">
+          <h3 className="text-base font-semibold group-hover:text-primary transition-colors truncate">{name}</h3>
+          <div className="flex items-center gap-2 shrink-0">
+            <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${
+              status === 'success' ? 'bg-green-500/10 text-green-400' :
+              status === 'failed' ? 'bg-red-500/10 text-red-400' :
+              status === 'running' ? 'bg-yellow-500/10 text-yellow-400' :
+              'bg-slate-500/10 text-slate-400'
+            }`}>
+              {status === 'success' ? t('dashboard.buildPassing') :
+               status === 'failed' ? t('dashboard.buildFailed') :
+               status === 'running' ? t('dashboard.building') : t('dashboard.pending')}
+            </span>
+            {confirmingDelete ? (
+              <button
+                onClick={onDeleteConfirm}
+                className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-white bg-red-500 hover:bg-red-600 rounded-md transition-colors z-10"
+                title={t('dashboard.confirmDelete')}
+              >
+                <Check className="w-3 h-3" />
+                {t('dashboard.confirmDelete')}
+              </button>
+            ) : (
+              <button
+                onClick={onDelete}
+                className="p-1.5 text-text-muted hover:text-red-400 hover:bg-red-400/10 rounded-md transition-colors z-10"
+                title={t('dashboard.deleteProject')}
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
+            )}
+            <ArrowRight className="w-4 h-4 opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all text-primary" />
+          </div>
+        </div>
+        <div className="flex items-center justify-between gap-4 mt-1">
+          <p className="text-text-muted text-sm truncate">{description || t('dashboard.noDescription')}</p>
+          <div className="flex items-center gap-2 text-xs text-text-muted shrink-0">
+            <Clock className="w-4 h-4" />
+            <span>{lastBuild || t('dashboard.neverBuilt')}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+);
+
 const Dashboard = () => {
   const { t } = useTranslation();
   const navigate = useNavigate();
@@ -64,6 +117,12 @@ const Dashboard = () => {
   const [error, setError] = useState(null);
   const [confirmingDeleteId, setConfirmingDeleteId] = useState(null);
   const [deleteError, setDeleteError] = useState(null);
+  const [viewMode, setViewMode] = useState(() => localStorage.getItem('dashboard-view-mode') || 'grid');
+
+  const handleSetViewMode = (mode) => {
+    setViewMode(mode);
+    localStorage.setItem('dashboard-view-mode', mode);
+  };
 
   useEffect(() => {
     const loadProjects = async () => {
@@ -133,13 +192,31 @@ const Dashboard = () => {
           <h2 className="text-3xl font-bold tracking-tight mb-2">{t('dashboard.title')}</h2>
           <p className="text-text-muted">{t('dashboard.subtitle')}</p>
         </div>
-        <button
-          onClick={() => navigate('/projects/new')}
-          className="bg-primary hover:bg-primary-hover text-white px-4 py-2.5 rounded-lg font-medium flex items-center gap-2 transition-colors shadow-lg shadow-primary/20"
-        >
-          <Plus className="w-5 h-5" />
-          <span>{t('dashboard.newProject')}</span>
-        </button>
+        <div className="flex items-center gap-3">
+          <div className="flex items-center bg-surface border border-border rounded-lg p-1">
+            <button
+              onClick={() => handleSetViewMode('grid')}
+              className={`p-1.5 rounded-md transition-colors ${viewMode === 'grid' ? 'bg-primary text-white' : 'text-text-muted hover:text-text'}`}
+              title={t('dashboard.gridView')}
+            >
+              <LayoutGrid className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => handleSetViewMode('list')}
+              className={`p-1.5 rounded-md transition-colors ${viewMode === 'list' ? 'bg-primary text-white' : 'text-text-muted hover:text-text'}`}
+              title={t('dashboard.listView')}
+            >
+              <List className="w-4 h-4" />
+            </button>
+          </div>
+          <button
+            onClick={() => navigate('/projects/new')}
+            className="bg-primary hover:bg-primary-hover text-white px-4 py-2.5 rounded-lg font-medium flex items-center gap-2 transition-colors shadow-lg shadow-primary/20"
+          >
+            <Plus className="w-5 h-5" />
+            <span>{t('dashboard.newProject')}</span>
+          </button>
+        </div>
       </div>
 
       {deleteError && (
@@ -149,8 +226,10 @@ const Dashboard = () => {
       )}
 
       {(() => {
+        const ItemComponent = viewMode === 'list' ? ProjectListItem : ProjectCard;
+
         const renderCard = (project) => (
-          <ProjectCard
+          <ItemComponent
             key={project.id}
             name={project.name}
             description={project.description}
@@ -164,7 +243,18 @@ const Dashboard = () => {
           />
         );
 
-        const addPlaceholder = (
+        const addPlaceholder = viewMode === 'list' ? (
+          <div
+            key="add-placeholder"
+            onClick={() => navigate('/projects/new')}
+            className="border-2 border-dashed border-border rounded-xl px-5 py-3 flex items-center gap-3 text-text-muted hover:text-primary hover:border-primary/50 hover:bg-surface/50 transition-all cursor-pointer group"
+          >
+            <div className="w-8 h-8 rounded-full bg-surface border border-border flex items-center justify-center group-hover:scale-110 transition-transform shrink-0">
+              <Plus className="w-4 h-4" />
+            </div>
+            <p className="font-medium">{t('dashboard.createNewProject')}</p>
+          </div>
+        ) : (
           <div
             key="add-placeholder"
             onClick={() => navigate('/projects/new')}
@@ -177,9 +267,13 @@ const Dashboard = () => {
           </div>
         );
 
+        const containerClass = viewMode === 'list'
+          ? 'flex flex-col gap-3'
+          : 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6';
+
         if (groups.length === 0) {
           return (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            <div className={containerClass}>
               {projects.map(renderCard)}
               {addPlaceholder}
             </div>
@@ -201,7 +295,7 @@ const Dashboard = () => {
             {sections.map((section, idx) => (
               <div key={section.key}>
                 <h3 className="text-lg font-semibold text-text-muted mb-4">{section.title}</h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <div className={containerClass}>
                   {section.items.map(renderCard)}
                   {idx === sections.length - 1 && addPlaceholder}
                 </div>
