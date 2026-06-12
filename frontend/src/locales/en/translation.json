@@ -187,7 +187,12 @@
         "start": "Start Build",
         "cancel": "Cancel"
       }
-    }
+    },
+    "dangerZone": "Danger Zone",
+    "deleteProjectWarning": "Deleting this project is permanent and cannot be undone. All builds, configuration and deployment history will be lost.",
+    "deleteProjectConfirmLabel": "Type the project name ({{name}}) to confirm:",
+    "deleteProjectButton": "Delete project permanently",
+    "deleteProjectFailed": "Failed to delete project. Please try again."
   },
   "deployment": {
     "targets": "Deployment Targets",

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { ArrowLeft, Server, Box, Activity, Settings, Terminal, Play, Save, Download, ChevronDown, ChevronUp, Edit2, X, Check, Trash2, Copy, AlertTriangle, Key, FileText, Loader2 } from 'lucide-react';
-import { fetchWithAuth, startBuild, updateProjectDetails, deleteBuild, updateSourceConfig, cloneProject, runPrefetchScript, fetchProjectGroups } from '../services/api';
+import { fetchWithAuth, startBuild, updateProjectDetails, deleteBuild, deleteProject, updateSourceConfig, cloneProject, runPrefetchScript, fetchProjectGroups } from '../services/api';
 import SourceBrowserModal from '../components/SourceManager/SourceBrowserModal';
 import SpecEditor from '../components/BuildManager/SpecEditor';
 import FileMapper from '../components/BuildManager/FileMapper';
@@ -67,6 +67,11 @@ const ProjectDetails = () => {
   const [notesText, setNotesText] = useState('');
   const [savingNotes, setSavingNotes] = useState(false);
   const [notesSaved, setNotesSaved] = useState(false);
+
+  // Delete project state
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
+  const [deletingProject, setDeletingProject] = useState(false);
+  const [deleteProjectError, setDeleteProjectError] = useState(null);
 
   // Connection edit modal state
   const [isConnectionModalOpen, setIsConnectionModalOpen] = useState(false);
@@ -307,6 +312,19 @@ const ProjectDetails = () => {
   const openCloneModal = () => {
     setCloneName(project.name + '-copy');
     setIsCloneModalOpen(true);
+  };
+
+  const handleDeleteProject = async () => {
+    if (deleteConfirmText !== project.name) return;
+    setDeletingProject(true);
+    setDeleteProjectError(null);
+    try {
+      await deleteProject(project.id);
+      navigate('/');
+    } catch (err) {
+      setDeleteProjectError(t('project.deleteProjectFailed'));
+      setDeletingProject(false);
+    }
   };
 
   if (loading) {
@@ -550,6 +568,38 @@ const ProjectDetails = () => {
                     {project.source_config?.include_patterns?.length || 0} files selected
                   </p>
                 </div>
+              </div>
+            </div>
+
+            <div className="md:col-span-2 bg-surface border border-red-500/30 rounded-xl p-6">
+              <h3 className="text-lg font-semibold text-red-400 mb-2 flex items-center gap-2">
+                <AlertTriangle className="w-5 h-5" />
+                {t('project.dangerZone')}
+              </h3>
+              <p className="text-text-muted text-sm mb-4">{t('project.deleteProjectWarning')}</p>
+              {deleteProjectError && (
+                <p className="text-red-400 text-sm mb-4">{deleteProjectError}</p>
+              )}
+              <div className="flex flex-col sm:flex-row sm:items-end gap-3">
+                <div className="flex-1">
+                  <label className="text-sm text-text-muted">
+                    {t('project.deleteProjectConfirmLabel', { name: project.name })}
+                  </label>
+                  <input
+                    type="text"
+                    value={deleteConfirmText}
+                    onChange={(e) => setDeleteConfirmText(e.target.value)}
+                    className="w-full mt-1 bg-background border border-border rounded px-3 py-1.5 text-text focus:outline-none focus:border-red-400"
+                  />
+                </div>
+                <button
+                  onClick={handleDeleteProject}
+                  disabled={deleteConfirmText !== project.name || deletingProject}
+                  className="flex items-center justify-center gap-2 px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+                >
+                  {deletingProject ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                  {t('project.deleteProjectButton')}
+                </button>
               </div>
             </div>
           </div>

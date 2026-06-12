@@ -1,10 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Plus, GitBranch, Clock, ArrowRight, Loader2, Trash2, Check, LayoutGrid, List, Play } from 'lucide-react';
-import { fetchProjects, deleteProject, fetchProjectGroups, startBuild } from '../services/api';
+import { Plus, GitBranch, Clock, ArrowRight, Loader2, LayoutGrid, List, Play } from 'lucide-react';
+import { fetchProjects, fetchProjectGroups, startBuild } from '../services/api';
 
-const ProjectCard = ({ name, description, lastBuild, status, onClick, onDelete, onDeleteConfirm, confirmingDelete, onBuildNow, isBuilding, t }) => {
+const ProjectCard = ({ name, description, lastBuild, status, onClick, onBuildNow, isBuilding, t }) => {
   const buildDisabled = isBuilding || status === 'running' || status === 'pending';
   return (
   <div onClick={onClick} className="bg-surface border border-border rounded-xl p-5 hover:border-primary/50 transition-colors group cursor-pointer shadow-lg shadow-black/20 relative">
@@ -23,24 +23,6 @@ const ProjectCard = ({ name, description, lastBuild, status, onClick, onDelete, 
            status === 'failed' ? t('dashboard.buildFailed') :
            status === 'running' ? t('dashboard.building') : t('dashboard.pending')}
         </span>
-        {confirmingDelete ? (
-          <button
-            onClick={onDeleteConfirm}
-            className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-white bg-red-500 hover:bg-red-600 rounded-md transition-colors z-10"
-            title={t('dashboard.confirmDelete')}
-          >
-            <Check className="w-3 h-3" />
-            {t('dashboard.confirmDelete')}
-          </button>
-        ) : (
-          <button
-            onClick={onDelete}
-            className="p-1.5 text-text-muted hover:text-red-400 hover:bg-red-400/10 rounded-md transition-colors z-10"
-            title={t('dashboard.deleteProject')}
-          >
-            <Trash2 className="w-4 h-4" />
-          </button>
-        )}
       </div>
     </div>
 
@@ -69,7 +51,7 @@ const ProjectCard = ({ name, description, lastBuild, status, onClick, onDelete, 
   );
 };
 
-const ProjectListItem = ({ name, description, lastBuild, status, onClick, onDelete, onDeleteConfirm, confirmingDelete, onBuildNow, isBuilding, t }) => {
+const ProjectListItem = ({ name, description, lastBuild, status, onClick, onBuildNow, isBuilding, t }) => {
   const buildDisabled = isBuilding || status === 'running' || status === 'pending';
   return (
   <div onClick={onClick} className="bg-surface border border-border rounded-xl px-5 py-3 hover:border-primary/50 transition-colors group cursor-pointer shadow-lg shadow-black/20 relative">
@@ -101,24 +83,6 @@ const ProjectListItem = ({ name, description, lastBuild, status, onClick, onDele
                 : <Play className="w-3.5 h-3.5" />}
               {t('project.buildNow')}
             </button>
-            {confirmingDelete ? (
-              <button
-                onClick={onDeleteConfirm}
-                className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-white bg-red-500 hover:bg-red-600 rounded-md transition-colors z-10"
-                title={t('dashboard.confirmDelete')}
-              >
-                <Check className="w-3 h-3" />
-                {t('dashboard.confirmDelete')}
-              </button>
-            ) : (
-              <button
-                onClick={onDelete}
-                className="p-1.5 text-text-muted hover:text-red-400 hover:bg-red-400/10 rounded-md transition-colors z-10"
-                title={t('dashboard.deleteProject')}
-              >
-                <Trash2 className="w-4 h-4" />
-              </button>
-            )}
             <ArrowRight className="w-4 h-4 opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all text-primary" />
           </div>
         </div>
@@ -142,8 +106,6 @@ const Dashboard = () => {
   const [groups, setGroups] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [confirmingDeleteId, setConfirmingDeleteId] = useState(null);
-  const [deleteError, setDeleteError] = useState(null);
   const [viewMode, setViewMode] = useState(() => localStorage.getItem('dashboard-view-mode') || 'grid');
   const [buildingIds, setBuildingIds] = useState(new Set());
   const [buildError, setBuildError] = useState(null);
@@ -171,32 +133,6 @@ const Dashboard = () => {
 
     loadProjects();
   }, [t]);
-
-  // Cancel pending delete if user clicks elsewhere
-  useEffect(() => {
-    if (!confirmingDeleteId) return;
-    const cancel = () => setConfirmingDeleteId(null);
-    window.addEventListener('click', cancel);
-    return () => window.removeEventListener('click', cancel);
-  }, [confirmingDeleteId]);
-
-  const handleDeleteClick = (e, projectId) => {
-    e.stopPropagation();
-    setDeleteError(null);
-    setConfirmingDeleteId(projectId);
-  };
-
-  const handleDeleteConfirm = async (e, projectId) => {
-    e.stopPropagation();
-    setConfirmingDeleteId(null);
-    try {
-      await deleteProject(projectId);
-      setProjects(projects.filter(p => p.id !== projectId));
-    } catch (err) {
-      console.error("Failed to delete project:", err);
-      setDeleteError(t('dashboard.deleteError'));
-    }
-  };
 
   const handleBuildNow = async (e, projectId) => {
     e.stopPropagation();
@@ -267,12 +203,6 @@ const Dashboard = () => {
         </div>
       </div>
 
-      {deleteError && (
-        <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400 text-sm">
-          {deleteError}
-        </div>
-      )}
-
       {buildError && (
         <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400 text-sm">
           {buildError}
@@ -290,9 +220,6 @@ const Dashboard = () => {
             status={project.status}
             lastBuild={project.last_build}
             onClick={() => navigate(`/projects/${project.id}`)}
-            onDelete={(e) => handleDeleteClick(e, project.id)}
-            onDeleteConfirm={(e) => handleDeleteConfirm(e, project.id)}
-            confirmingDelete={confirmingDeleteId === project.id}
             onBuildNow={(e) => handleBuildNow(e, project.id)}
             isBuilding={buildingIds.has(project.id)}
             t={t}

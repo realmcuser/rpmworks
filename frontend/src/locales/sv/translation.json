@@ -187,7 +187,12 @@
         "start": "Starta bygge",
         "cancel": "Avbryt"
       }
-    }
+    },
+    "dangerZone": "Farozon",
+    "deleteProjectWarning": "Att radera detta projekt är permanent och kan inte ångras. Alla byggen, inställningar och driftsättningar går förlorade.",
+    "deleteProjectConfirmLabel": "Skriv projektets namn ({{name}}) för att bekräfta:",
+    "deleteProjectButton": "Radera projekt permanent",
+    "deleteProjectFailed": "Det gick inte att radera projektet. Försök igen."
   },
   "deployment": {
     "targets": "Distributionsmål",
