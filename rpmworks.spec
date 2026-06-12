@@ -120,6 +120,11 @@ echo ""
 %preun
 [ $1 -eq 0 ] && systemctl stop rpmworks 2>/dev/null || true
 
+%posttrans
+# Restart the service after an upgrade so new code/migrations take effect.
+# try-restart is a no-op if the service isn't running (e.g. fresh install).
+systemctl try-restart rpmworks.service >/dev/null 2>&1 || true
+
 %files
 /opt/rpmworks
 %dir %attr(700,rpmworks,rpmworks) /opt/rpmworks/.ssh
