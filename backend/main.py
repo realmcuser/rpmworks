@@ -1332,42 +1332,47 @@ async def update_build_config(project_id: int, config: BuildConfig, db: Session 
         db_build_config = models.BuildConfig(project_id=project_id)
         db.add(db_build_config)
 
-    if config.spec_template is not None:
+    # Only apply fields that were actually present in the request body, so
+    # partial PUTs don't silently reset list/bool fields to Pydantic defaults.
+    fields_set = config.model_fields_set
+
+    if "spec_template" in fields_set:
         db_build_config.spec_template = config.spec_template
-    if config.version is not None:
+    if "version" in fields_set:
         db_build_config.version = config.version
-    if config.release is not None:
+    if "release" in fields_set:
         db_build_config.release = config.release
-    if config.build_arch is not None:
+    if "build_arch" in fields_set:
         db_build_config.build_arch = config.build_arch
-    if config.build_requires is not None:
+    if "build_requires" in fields_set:
         db_build_config.build_requires = config.build_requires
-    if config.auto_increment_release is not None:
+    if "auto_increment_release" in fields_set:
         db_build_config.auto_increment_release = config.auto_increment_release
-    if config.file_mappings is not None:
+    if "file_mappings" in fields_set:
         db_build_config.file_mappings = config.file_mappings
 
     # RPM package name override
-    db_build_config.rpm_name = config.rpm_name or None
+    if "rpm_name" in fields_set:
+        db_build_config.rpm_name = config.rpm_name or None
 
     # Advanced naming options
-    if config.use_extra_name_vars is not None:
+    if "use_extra_name_vars" in fields_set:
         db_build_config.use_extra_name_vars = config.use_extra_name_vars
-    if config.timestamp_format is not None:
+    if "timestamp_format" in fields_set:
         db_build_config.timestamp_format = config.timestamp_format
-    if config.extra_vars_target is not None:
+    if "extra_vars_target" in fields_set:
         db_build_config.extra_vars_target = config.extra_vars_target
 
     # Raw spec mode
-    if config.use_raw_spec is not None:
+    if "use_raw_spec" in fields_set:
         db_build_config.use_raw_spec = config.use_raw_spec
 
     # Inject changelog in raw mode
-    if config.inject_changelog is not None:
+    if "inject_changelog" in fields_set:
         db_build_config.inject_changelog = config.inject_changelog
 
     # Handle target_distros: update project_distributions
-    if config.target_distros is not None:
+    if "target_distros" in fields_set:
         from sqlalchemy import delete
         db.execute(delete(models.project_distributions).where(
             models.project_distributions.c.project_id == project_id
