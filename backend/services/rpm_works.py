@@ -3,6 +3,8 @@ import subprocess
 import shutil
 import time
 import re
+import hashlib
+import fcntl
 from typing import List
 from models import Project, BuildConfig, Build, Distribution
 from services.ssh_service import SSHService
@@ -440,18 +442,6 @@ rm -rf %{{buildroot}}
                 if project.build_config.build_requires:
                     deps.extend(project.build_config.build_requires)
                 
-                install_cmd = f"dnf install -y {' '.join(deps)}"
-                
-                # RPMBuild command
-                # We need to point to the spec file INSIDE the container
-                spec_filename = os.path.basename(spec_path)
-                container_spec_path = f"{container_build_dir}/SPECS/{spec_filename}"
-                
-                build_cmd = f"rpmbuild -bb {container_spec_path}"
-                
-                # Combined command
-                full_container_cmd = f"{install_cmd} && {build_cmd}"
-                
                 # Use persistent storage for podman images so they are cached between restarts
                 # usually /data/podman-storage in the container
                 storage_root = os.path.join(os.path.dirname(BUILD_ROOT), "podman-storage")
@@ -463,6 +453,64 @@ rm -rf %{{buildroot}}
                 run_root = "/tmp/podman-run-rpmworks"
                 os.makedirs(run_root, exist_ok=True)
 
+                # Cached builder image with deps preinstalled, keyed by a hash of the deps list
+                # so a new image is built automatically whenever build_requires changes.
+                deps_hash = hashlib.md5(" ".join(sorted(deps)).encode()).hexdigest()[:8]
+                safe_image_name = container_image.replace(':', '-').replace('/', '-')
+                cache_image = f"rpmworks-builder-{safe_image_name}-{deps_hash}"
+
+                # File lock prevents concurrent builds from racing to create the same cache image
+                lock_path = os.path.join(run_root, f"cache-{deps_hash}.lock")
+                lock_fd = open(lock_path, "w")
+                try:
+                    fcntl.flock(lock_fd, fcntl.LOCK_EX)
+                    check = subprocess.run(
+                        ["podman", "--root", storage_root, "--runroot", run_root,
+                         "image", "exists", cache_image],
+                        capture_output=True
+                    )
+                    if check.returncode != 0:
+                        log_msg(f"Skapar cachad byggmiljö: {cache_image} (görs bara en gång per deps-kombination)")
+                        tmp_name = f"rpmworks-tmp-{int(time.time())}"
+                        install_cmd = f"dnf install -y {' '.join(deps)} && dnf clean all"
+                        r = subprocess.run(
+                            ["podman", "--root", storage_root, "--runroot", run_root,
+                             "run", "--name", tmp_name, "--storage-driver=vfs", "--network=host",
+                             container_image, "/bin/bash", "-c", install_cmd],
+                            capture_output=True, text=True
+                        )
+                        if r.returncode != 0:
+                            log_msg(f"VARNING: kunde inte skapa cache-image, faller tillbaka på bas-image\n{r.stderr}")
+                            subprocess.run(
+                                ["podman", "--root", storage_root, "--runroot", run_root, "rm", tmp_name],
+                                capture_output=True
+                            )
+                            cache_image = container_image
+                        else:
+                            subprocess.run(
+                                ["podman", "--root", storage_root, "--runroot", run_root,
+                                 "commit", tmp_name, cache_image],
+                                check=True, capture_output=True
+                            )
+                            subprocess.run(
+                                ["podman", "--root", storage_root, "--runroot", run_root, "rm", tmp_name],
+                                capture_output=True
+                            )
+                            log_msg(f"Cachad byggmiljö skapad: {cache_image}")
+                    else:
+                        log_msg(f"Återanvänder cachad byggmiljö: {cache_image}")
+                finally:
+                    fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                    lock_fd.close()
+
+                # RPMBuild command
+                # We need to point to the spec file INSIDE the container
+                spec_filename = os.path.basename(spec_path)
+                container_spec_path = f"{container_build_dir}/SPECS/{spec_filename}"
+
+                build_cmd = f"rpmbuild -bb {container_spec_path}"
+                full_container_cmd = build_cmd
+
                 podman_cmd = [
                     "podman",
                     "--root", storage_root,
@@ -471,11 +519,11 @@ rm -rf %{{buildroot}}
                     "--storage-driver=vfs",
                     "--network=host",
                     "-v", f"{build_dir}:{container_build_dir}:Z",
-                    container_image,
+                    cache_image,
                     "/bin/bash", "-c", full_container_cmd
                 ]
-                
-                log_msg(f"Launching Podman container: {container_image}")
+
+                log_msg(f"Launching Podman container: {cache_image}")
                 log_msg(f"Command: {full_container_cmd}")
                 
                 process = subprocess.Popen(
