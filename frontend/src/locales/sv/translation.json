@@ -16,7 +16,9 @@
     "loadError": "Kunde inte ladda projekt. Körs backend?",
     "ungrouped": "Ej grupperade",
     "gridView": "Rutnätsvy",
-    "listView": "Listvy"
+    "listView": "Listvy",
+    "buildGroup": "Bygg alla",
+    "buildGroupTitle": "Bygg alla projekt i denna grupp"
   },
   "sidebar": {
     "projects": "Projekt",

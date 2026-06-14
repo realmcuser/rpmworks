@@ -183,6 +183,17 @@ export async function startBuild(projectId, changelogMessage = null) {
   return response.json();
 }
 
+export async function startGroupBuild(groupId) {
+  const response = await fetchWithAuth(`/api/project-groups/${groupId}/build`, {
+    method: 'POST',
+  });
+
+  if (!response.ok) {
+    throw new Error('Failed to start group build');
+  }
+  return response.json();
+}
+
 export async function deleteBuild(buildId) {
   const response = await fetchWithAuth(`/api/builds/${buildId}`, {
     method: 'DELETE',

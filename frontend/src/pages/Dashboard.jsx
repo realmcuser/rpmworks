@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Plus, GitBranch, Clock, ArrowRight, Loader2, LayoutGrid, List, Play } from 'lucide-react';
-import { fetchProjects, fetchProjectGroups, startBuild } from '../services/api';
+import { fetchProjects, fetchProjectGroups, startBuild, startGroupBuild } from '../services/api';
 
 const ProjectCard = ({ name, description, lastBuild, status, onClick, onBuildNow, isBuilding, t }) => {
   const buildDisabled = isBuilding || status === 'running' || status === 'pending';
@@ -108,6 +108,7 @@ const Dashboard = () => {
   const [error, setError] = useState(null);
   const [viewMode, setViewMode] = useState(() => localStorage.getItem('dashboard-view-mode') || 'grid');
   const [buildingIds, setBuildingIds] = useState(new Set());
+  const [buildingGroupIds, setBuildingGroupIds] = useState(new Set());
   const [buildError, setBuildError] = useState(null);
 
   const handleSetViewMode = (mode) => {
@@ -148,6 +149,26 @@ const Dashboard = () => {
       setBuildingIds(prev => {
         const next = new Set(prev);
         next.delete(projectId);
+        return next;
+      });
+    }
+  };
+
+  const handleBuildGroup = async (e, groupId, projectIds) => {
+    e.stopPropagation();
+    setBuildError(null);
+    setBuildingGroupIds(prev => new Set(prev).add(groupId));
+    try {
+      await startGroupBuild(groupId);
+      const idSet = new Set(projectIds);
+      setProjects(prev => prev.map(p => idSet.has(p.id) ? { ...p, status: 'running' } : p));
+    } catch (err) {
+      console.error("Failed to start group build:", err);
+      setBuildError(t('project.builds.startFailed'));
+    } finally {
+      setBuildingGroupIds(prev => {
+        const next = new Set(prev);
+        next.delete(groupId);
         return next;
       });
     }
@@ -268,6 +289,7 @@ const Dashboard = () => {
           ...groups.map(group => ({
             key: `group-${group.id}`,
             title: group.name,
+            groupId: group.id,
             items: projects.filter(p => p.project_group_id === group.id)
           })),
           { key: 'ungrouped', title: t('dashboard.ungrouped'), items: ungrouped }
@@ -277,7 +299,24 @@ const Dashboard = () => {
           <div className="space-y-10">
             {sections.map((section, idx) => (
               <div key={section.key}>
-                <h3 className="text-lg font-semibold text-text-muted mb-4">{section.title}</h3>
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-semibold text-text-muted">{section.title}</h3>
+                  {section.groupId && section.items.length > 0 && (
+                    <button
+                      onClick={(e) => handleBuildGroup(e, section.groupId, section.items.map(p => p.id))}
+                      disabled={buildingGroupIds.has(section.groupId)}
+                      className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold bg-primary hover:bg-primary-hover text-white shadow-lg shadow-primary/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      title={t('dashboard.buildGroupTitle')}
+                    >
+                      {buildingGroupIds.has(section.groupId) ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Play className="w-4 h-4" />
+                      )}
+                      <span>{t('dashboard.buildGroup')}</span>
+                    </button>
+                  )}
+                </div>
                 <div className={containerClass}>
                   {section.items.map(renderCard)}
                   {idx === sections.length - 1 && addPlaceholder}

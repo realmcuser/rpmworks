@@ -16,7 +16,9 @@
     "loadError": "Failed to load projects. Is the backend running?",
     "ungrouped": "Ungrouped",
     "gridView": "Grid view",
-    "listView": "List view"
+    "listView": "List view",
+    "buildGroup": "Build all",
+    "buildGroupTitle": "Build all projects in this group"
   },
   "sidebar": {
     "projects": "Projects",

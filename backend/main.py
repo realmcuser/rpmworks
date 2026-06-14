@@ -760,15 +760,8 @@ def auto_deploy_build(build, project_id, db):
         print(f"Auto-publish to target {target.id}: {deployment.status}")
 
 
-@app.post("/api/build/start")
-async def start_build(req: BuildRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    project = db.query(models.Project).filter(models.Project.id == req.project_id).first()
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    if not check_project_access(project, current_user):
-        raise HTTPException(status_code=403, detail="Access denied")
-
+def _start_build_for_project(project: models.Project, changelog_message: Optional[str], background_tasks: BackgroundTasks, db: Session):
+    """Core build-starting logic, shared between single-project and build-group endpoints."""
     # Get target distributions from project_distributions
     target_distros = [d.id for d in project.distributions]
     if not target_distros:
@@ -799,20 +792,20 @@ async def start_build(req: BuildRequest, background_tasks: BackgroundTasks, db: 
 
     from sqlalchemy import func as sa_func, distinct
     distinct_build_numbers = db.query(sa_func.count(distinct(models.Build.build_number))).filter(
-        models.Build.project_id == req.project_id
+        models.Build.project_id == project.id
     ).scalar() or 0
 
     if distinct_build_numbers >= max_builds:
         # Find oldest build_numbers to delete
         to_delete_count = distinct_build_numbers - max_builds + 1
         oldest_numbers = db.query(models.Build.build_number).filter(
-            models.Build.project_id == req.project_id
+            models.Build.project_id == project.id
         ).group_by(models.Build.build_number).order_by(models.Build.build_number.asc()).limit(to_delete_count).all()
         oldest_numbers = [r[0] for r in oldest_numbers]
 
         if oldest_numbers:
             builds_to_delete = db.query(models.Build).filter(
-                models.Build.project_id == req.project_id,
+                models.Build.project_id == project.id,
                 models.Build.build_number.in_(oldest_numbers)
             ).all()
             print(f"Retention policy: Deleting {len(builds_to_delete)} builds for {len(oldest_numbers)} build numbers (Max: {max_builds})")
@@ -834,7 +827,7 @@ async def start_build(req: BuildRequest, background_tasks: BackgroundTasks, db: 
             target_distro=distro_id,
             status="pending",
             started_at=started_at,
-            changelog_message=req.changelog_message or None
+            changelog_message=changelog_message or None
         )
         db.add(new_build)
         db.commit()
@@ -896,9 +889,46 @@ async def start_build(req: BuildRequest, background_tasks: BackgroundTasks, db: 
         finally:
             db_final.close()
 
-    background_tasks.add_task(run_sequential_builds, build_ids, req.project_id)
+    background_tasks.add_task(run_sequential_builds, build_ids, project.id)
 
-    return {"message": "Build started", "project_id": req.project_id, "build_ids": build_ids, "build_number": build_number}
+    return {"message": "Build started", "project_id": project.id, "build_ids": build_ids, "build_number": build_number}
+
+
+@app.post("/api/build/start")
+async def start_build(req: BuildRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    project = db.query(models.Project).filter(models.Project.id == req.project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    if not check_project_access(project, current_user):
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    return _start_build_for_project(project, req.changelog_message, background_tasks, db)
+
+
+@app.post("/api/project-groups/{group_id}/build")
+async def build_project_group(group_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    group = db.query(models.ProjectGroup).filter(models.ProjectGroup.id == group_id).first()
+    if not group:
+        raise HTTPException(status_code=404, detail="Project group not found")
+
+    projects = db.query(models.Project).filter(
+        models.Project.project_group_id == group_id
+    ).order_by(models.Project.group_order.asc(), models.Project.id.asc()).all()
+
+    results = []
+    for project in projects:
+        if not check_project_access(project, current_user):
+            continue
+        if not project.distributions:
+            continue
+        results.append(_start_build_for_project(project, None, background_tasks, db))
+
+    if not results:
+        raise HTTPException(status_code=400, detail="No buildable projects found in this group")
+
+    return {"message": "Builds started", "builds": results}
+
 
 @app.get("/api/builds/{build_id}/download/{filename}")
 async def download_build_artifact(build_id: int, filename: str, db: Session = Depends(get_db)):
