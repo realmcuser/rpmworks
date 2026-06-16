@@ -111,6 +111,19 @@ const Dashboard = () => {
   const [buildingGroupIds, setBuildingGroupIds] = useState(new Set());
   const [buildError, setBuildError] = useState(null);
 
+  const hasRunning = projects.some(p => p.status === 'running' || p.status === 'pending');
+
+  useEffect(() => {
+    if (!hasRunning) return;
+    const interval = setInterval(async () => {
+      try {
+        const projectsData = await fetchProjects();
+        setProjects(projectsData);
+      } catch (_) {}
+    }, 4000);
+    return () => clearInterval(interval);
+  }, [hasRunning]);
+
   const handleSetViewMode = (mode) => {
     setViewMode(mode);
     localStorage.setItem('dashboard-view-mode', mode);
