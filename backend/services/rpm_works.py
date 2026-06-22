@@ -475,7 +475,7 @@ rm -rf %{{buildroot}}
                         install_cmd = f"dnf install -y {' '.join(deps)} && dnf clean all"
                         r = subprocess.run(
                             ["podman", "--root", storage_root, "--runroot", run_root,
-                             "run", "--name", tmp_name, "--storage-driver=vfs", "--network=host",
+                             "run", "--name", tmp_name, "--network=host",
                              container_image, "/bin/bash", "-c", install_cmd],
                             capture_output=True, text=True
                         )
@@ -516,7 +516,6 @@ rm -rf %{{buildroot}}
                     "--root", storage_root,
                     "--runroot", run_root,
                     "run", "--rm",
-                    "--storage-driver=vfs",
                     "--network=host",
                     "-v", f"{build_dir}:{container_build_dir}:Z",
                     cache_image,
