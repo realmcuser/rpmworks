@@ -49,23 +49,42 @@ def _ldap_authenticate(username: str, password: str, cfg: models.LdapSettings) -
 
         try:
             conn = Connection(server, user=user_bind_dn, password=password, auto_bind=True)
-        except Exception:
+        except Exception as e:
+            print(f"[LDAP] bind failed for user_bind_dn='{user_bind_dn}': {e}", flush=True)
             return None
 
         is_admin = False
         if cfg.required_group_dn or cfg.admin_group_dn:
-            conn.search(
+            # Use the service account for the group lookup if configured — the
+            # logged-in user's own bind often lacks permission to read memberOf.
+            search_conn = conn
+            if cfg.bind_dn and cfg.bind_password:
+                try:
+                    search_conn = Connection(server, user=cfg.bind_dn, password=cfg.bind_password, auto_bind=True)
+                except Exception as e:
+                    print(f"[LDAP] service account bind failed for '{cfg.bind_dn}': {e}", flush=True)
+                    conn.unbind()
+                    return None
+
+            search_conn.search(
                 search_base=cfg.base_dn,
                 search_filter=f"({cfg.user_attr}={username})",
                 search_scope=SUBTREE,
                 attributes=["memberOf"],
             )
-            if not conn.entries:
+            if not search_conn.entries:
+                print(f"[LDAP] group lookup found no entry for '{username}' under base_dn='{cfg.base_dn}'", flush=True)
+                if search_conn is not conn:
+                    search_conn.unbind()
                 conn.unbind()
                 return None
-            entry = conn.entries[0]
+            entry = search_conn.entries[0]
             member_of = [m.lower() for m in (entry.memberOf.values if entry.memberOf else [])]
+            if search_conn is not conn:
+                search_conn.unbind()
+
             if cfg.required_group_dn and cfg.required_group_dn.lower() not in member_of:
+                print(f"[LDAP] user '{username}' is not a member of required_group_dn='{cfg.required_group_dn}' (memberOf={member_of})", flush=True)
                 conn.unbind()
                 return None
             if cfg.admin_group_dn:
@@ -73,7 +92,8 @@ def _ldap_authenticate(username: str, password: str, cfg: models.LdapSettings) -
 
         conn.unbind()
         return {"is_admin": is_admin}
-    except Exception:
+    except Exception as e:
+        print(f"[LDAP] authentication error for user '{username}': {e}", flush=True)
         return None
 
 
@@ -1053,6 +1073,7 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
         # No local user — try LDAP if enabled
         ldap_cfg = db.query(models.LdapSettings).filter(models.LdapSettings.id == 1).first()
         if not ldap_cfg or not ldap_cfg.enabled:
+            print(f"[LDAP] login attempt for '{form_data.username}' rejected — LDAP is not enabled", flush=True)
             raise _unauth
 
         result = _ldap_authenticate(form_data.username, form_data.password, ldap_cfg)
