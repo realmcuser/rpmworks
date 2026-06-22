@@ -7,6 +7,7 @@ from typing import List, Optional
 from datetime import datetime
 import time
 import os
+import ssl
 from sqlalchemy import text, func
 from sqlalchemy.orm import Session
 from services.ssh_service import SSHService
@@ -31,7 +32,68 @@ with engine.connect() as _conn:
     _conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS project_group_id INTEGER REFERENCES project_groups(id) ON DELETE SET NULL"))
     _conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS group_order INTEGER NOT NULL DEFAULT 0"))
     _conn.execute(text("ALTER TABLE project_groups ADD COLUMN IF NOT EXISTS sort_order INTEGER NOT NULL DEFAULT 0"))
+    _conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_source VARCHAR NOT NULL DEFAULT 'local'"))
     _conn.commit()
+
+def _ldap_authenticate(username: str, password: str, cfg: models.LdapSettings) -> Optional[dict]:
+    """Bind to LDAP and return {is_admin: bool} on success, None on failure."""
+    try:
+        from ldap3 import Server, Connection, ALL, SUBTREE, Tls
+        tls_config = Tls(validate=ssl.CERT_NONE) if not cfg.tls_verify else None
+        server = Server(cfg.server_url, tls=tls_config, get_info=ALL, connect_timeout=5)
+
+        if cfg.bind_dn_template:
+            user_bind_dn = cfg.bind_dn_template.replace("{username}", username)
+        else:
+            user_bind_dn = f"{cfg.user_attr}={username},{cfg.base_dn}"
+
+        try:
+            conn = Connection(server, user=user_bind_dn, password=password, auto_bind=True)
+        except Exception:
+            return None
+
+        is_admin = False
+        if cfg.required_group_dn or cfg.admin_group_dn:
+            conn.search(
+                search_base=cfg.base_dn,
+                search_filter=f"({cfg.user_attr}={username})",
+                search_scope=SUBTREE,
+                attributes=["memberOf"],
+            )
+            if not conn.entries:
+                conn.unbind()
+                return None
+            entry = conn.entries[0]
+            member_of = [m.lower() for m in (entry.memberOf.values if entry.memberOf else [])]
+            if cfg.required_group_dn and cfg.required_group_dn.lower() not in member_of:
+                conn.unbind()
+                return None
+            if cfg.admin_group_dn:
+                is_admin = cfg.admin_group_dn.lower() in member_of
+
+        conn.unbind()
+        return {"is_admin": is_admin}
+    except Exception:
+        return None
+
+
+def _ldap_test_connection(server_url: str, bind_dn: Optional[str], bind_password: Optional[str], tls_verify: bool) -> dict:
+    """Test LDAP server reachability. Returns {success, message}."""
+    try:
+        from ldap3 import Server, Connection, ALL, Tls
+        tls_config = Tls(validate=ssl.CERT_NONE) if not tls_verify else None
+        server = Server(server_url, tls=tls_config, get_info=ALL, connect_timeout=5)
+        if bind_dn and bind_password:
+            conn = Connection(server, user=bind_dn, password=bind_password, auto_bind=True)
+            msg = f"Connected and authenticated as {bind_dn}"
+        else:
+            conn = Connection(server, auto_bind=True)
+            msg = "Connected to LDAP server (anonymous bind)"
+        conn.unbind()
+        return {"success": True, "message": msg}
+    except Exception as e:
+        return {"success": False, "message": str(e)}
+
 
 app = FastAPI(title="RPM Works API")
 
@@ -83,10 +145,8 @@ def get_system_setting(db: Session, key: str, default: str = None) -> str:
     return setting.value if setting else default
 
 def check_project_access(project: models.Project, user: models.User) -> bool:
-    """Check if user has access to project. Admin can access all, others only their own."""
-    if user.role == "admin":
-        return True
-    return project.user_id == user.id
+    """All authenticated users can access all projects. Deletion is restricted separately to admins."""
+    return True
 
 def set_system_setting(db: Session, key: str, value: str):
     setting = db.query(models.SystemSettings).filter(models.SystemSettings.key == key).first()
@@ -111,9 +171,30 @@ class User(BaseModel):
     username: str
     is_active: bool
     role: str
+    auth_source: str = "local"
 
     class Config:
         from_attributes = True
+
+
+class LdapSettingsSchema(BaseModel):
+    enabled: bool = False
+    server_url: Optional[str] = None
+    base_dn: Optional[str] = None
+    user_attr: str = "uid"
+    bind_dn_template: Optional[str] = None
+    bind_dn: Optional[str] = None
+    bind_password: Optional[str] = None
+    required_group_dn: Optional[str] = None
+    admin_group_dn: Optional[str] = None
+    tls_verify: bool = True
+
+
+class LdapTestRequest(BaseModel):
+    server_url: str
+    bind_dn: Optional[str] = None
+    bind_password: Optional[str] = None
+    tls_verify: bool = True
 
 class UserUpdate(BaseModel):
     is_active: Optional[bool] = None
@@ -951,19 +1032,59 @@ async def download_build_artifact(build_id: int, filename: str, db: Session = De
 
 @app.post("/api/token", response_model=Token)
 async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    user = db.query(models.User).filter(models.User.username == form_data.username).first()
-    if not user or not auth_utils.verify_password(form_data.password, user.hashed_password):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username or password",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    if not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Account is disabled",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+    _unauth = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Incorrect username or password",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    # Always try local auth first (local users never fall through to LDAP)
+    local_user = db.query(models.User).filter(
+        models.User.username == form_data.username,
+        models.User.auth_source == "local",
+    ).first()
+
+    if local_user:
+        if not auth_utils.verify_password(form_data.password, local_user.hashed_password):
+            raise _unauth
+        if not local_user.is_active:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Account is disabled", headers={"WWW-Authenticate": "Bearer"})
+        user = local_user
+    else:
+        # No local user — try LDAP if enabled
+        ldap_cfg = db.query(models.LdapSettings).filter(models.LdapSettings.id == 1).first()
+        if not ldap_cfg or not ldap_cfg.enabled:
+            raise _unauth
+
+        result = _ldap_authenticate(form_data.username, form_data.password, ldap_cfg)
+        if result is None:
+            raise _unauth
+
+        # Auto-provision or refresh LDAP user
+        user = db.query(models.User).filter(
+            models.User.username == form_data.username,
+            models.User.auth_source == "ldap",
+        ).first()
+        if not user:
+            role = "admin" if result.get("is_admin") else "user"
+            user = models.User(
+                username=form_data.username,
+                hashed_password="!ldap",
+                role=role,
+                auth_source="ldap",
+                is_active=True,
+            )
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+        else:
+            if not user.is_active:
+                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Account is disabled", headers={"WWW-Authenticate": "Bearer"})
+            if ldap_cfg.admin_group_dn:
+                new_role = "admin" if result.get("is_admin") else "user"
+                if user.role != new_role:
+                    user.role = new_role
+                    db.commit()
+
     access_token_expires = auth_utils.timedelta(minutes=auth_utils.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = auth_utils.create_access_token(
         data={"sub": user.username}, expires_delta=access_token_expires
@@ -1001,12 +1122,7 @@ async def read_users_me(current_user: models.User = Depends(get_current_user)):
 
 @app.get("/api/projects", response_model=List[Project])
 async def get_projects(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    # Admin sees all projects, regular users see only their own
-    if current_user.role == "admin":
-        projects = db.query(models.Project).order_by(models.Project.group_order.asc(), models.Project.id.asc()).all()
-    else:
-        projects = db.query(models.Project).filter(models.Project.user_id == current_user.id).order_by(models.Project.group_order.asc(), models.Project.id.asc()).all()
-    return projects
+    return db.query(models.Project).order_by(models.Project.group_order.asc(), models.Project.id.asc()).all()
 
 @app.post("/api/projects", response_model=Project)
 async def create_project(project_in: ProjectCreate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
@@ -1048,13 +1164,10 @@ def delete_build_files(build_id: int):
         shutil.rmtree(build_path)
 
 @app.delete("/api/projects/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_project(project_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+async def delete_project(project_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_admin)):
     project = db.query(models.Project).filter(models.Project.id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
-
-    if not check_project_access(project, current_user):
-        raise HTTPException(status_code=403, detail="Access denied")
 
     # Delete build directories
     if project.builds:
@@ -1634,6 +1747,56 @@ async def update_admin_settings(settings: SystemSettingsResponse, db: Session = 
     """Update system settings (admin only)"""
     set_system_setting(db, "allow_registration", str(settings.allow_registration).lower())
     return settings
+
+@app.get("/api/admin/ldap", response_model=LdapSettingsSchema)
+async def get_ldap_settings(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_admin)):
+    """Get LDAP configuration (admin only)"""
+    cfg = db.query(models.LdapSettings).filter(models.LdapSettings.id == 1).first()
+    if not cfg:
+        return LdapSettingsSchema()
+    return LdapSettingsSchema(
+        enabled=cfg.enabled,
+        server_url=cfg.server_url,
+        base_dn=cfg.base_dn,
+        user_attr=cfg.user_attr or "uid",
+        bind_dn_template=cfg.bind_dn_template,
+        bind_dn=cfg.bind_dn,
+        bind_password=cfg.bind_password,
+        required_group_dn=cfg.required_group_dn,
+        admin_group_dn=cfg.admin_group_dn,
+        tls_verify=cfg.tls_verify if cfg.tls_verify is not None else True,
+    )
+
+
+@app.put("/api/admin/ldap", response_model=LdapSettingsSchema)
+async def update_ldap_settings(data: LdapSettingsSchema, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_admin)):
+    """Update LDAP configuration (admin only)"""
+    cfg = db.query(models.LdapSettings).filter(models.LdapSettings.id == 1).first()
+    if not cfg:
+        cfg = models.LdapSettings(id=1)
+        db.add(cfg)
+    cfg.enabled = data.enabled
+    cfg.server_url = data.server_url
+    cfg.base_dn = data.base_dn
+    cfg.user_attr = data.user_attr
+    cfg.bind_dn_template = data.bind_dn_template
+    cfg.bind_dn = data.bind_dn
+    if data.bind_password is not None:
+        cfg.bind_password = data.bind_password
+    cfg.required_group_dn = data.required_group_dn
+    cfg.admin_group_dn = data.admin_group_dn
+    cfg.tls_verify = data.tls_verify
+    db.commit()
+    db.refresh(cfg)
+    return data
+
+
+@app.post("/api/admin/ldap/test")
+async def test_ldap_settings(req: LdapTestRequest, current_user: models.User = Depends(get_current_admin)):
+    """Test LDAP connectivity without saving (admin only)"""
+    result = _ldap_test_connection(req.server_url, req.bind_dn, req.bind_password, req.tls_verify)
+    return result
+
 
 @app.get("/api/settings/registration")
 async def check_registration_allowed(db: Session = Depends(get_db)):

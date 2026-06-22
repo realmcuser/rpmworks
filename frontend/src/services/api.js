@@ -446,6 +446,31 @@ export async function fetchCurrentUser() {
   return response.json();
 }
 
+// LDAP settings (admin only)
+export async function fetchLdapSettings() {
+  const response = await fetchWithAuth('/api/admin/ldap');
+  if (!response.ok) throw new Error('Failed to fetch LDAP settings');
+  return response.json();
+}
+
+export async function updateLdapSettings(data) {
+  const response = await fetchWithAuth('/api/admin/ldap', {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+  if (!response.ok) throw new Error('Failed to save LDAP settings');
+  return response.json();
+}
+
+export async function testLdapConnection(data) {
+  const response = await fetchWithAuth('/api/admin/ldap/test', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+  if (!response.ok) throw new Error('Failed to test LDAP connection');
+  return response.json();
+}
+
 // Clone a project
 export async function cloneProject(projectId, newName) {
   const response = await fetchWithAuth(`/api/projects/${projectId}/clone`, {

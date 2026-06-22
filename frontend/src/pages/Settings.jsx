@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Users, Shield, Loader2, AlertCircle, Check, X, FolderTree, Plus, Pencil, Trash2, GripVertical } from 'lucide-react';
-import { fetchUsers, updateUser, fetchAdminSettings, updateAdminSettings, fetchCurrentUser, fetchProjectGroups, createProjectGroup, updateProjectGroup, deleteProjectGroup, fetchProjects, reorderProjects, reorderProjectGroups } from '../services/api';
+import { Users, Shield, Loader2, AlertCircle, Check, X, FolderTree, Plus, Pencil, Trash2, GripVertical, Network } from 'lucide-react';
+import { fetchUsers, updateUser, fetchAdminSettings, updateAdminSettings, fetchCurrentUser, fetchProjectGroups, createProjectGroup, updateProjectGroup, deleteProjectGroup, fetchProjects, reorderProjects, reorderProjectGroups, fetchLdapSettings, updateLdapSettings, testLdapConnection } from '../services/api';
 
 const buildSections = (groupsList, projectsList) => {
   const sections = {};
@@ -28,6 +28,16 @@ const Settings = () => {
   const [sectionProjects, setSectionProjects] = useState({});
   const [dragItem, setDragItem] = useState(null);
   const [groupDragIndex, setGroupDragIndex] = useState(null);
+  const [ldap, setLdap] = useState({
+    enabled: false, server_url: '', base_dn: '', user_attr: 'uid',
+    bind_dn_template: '', bind_dn: '', bind_password: '',
+    required_group_dn: '', admin_group_dn: '', tls_verify: true,
+  });
+  const [ldapSaving, setLdapSaving] = useState(false);
+  const [ldapError, setLdapError] = useState(null);
+  const [ldapSuccess, setLdapSuccess] = useState(null);
+  const [ldapTestResult, setLdapTestResult] = useState(null);
+  const [ldapTesting, setLdapTesting] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -41,16 +51,18 @@ const Settings = () => {
       setCurrentUser(user);
 
       if (user.role === 'admin') {
-        const [usersData, settingsData, groupsData, projectsData] = await Promise.all([
+        const [usersData, settingsData, groupsData, projectsData, ldapData] = await Promise.all([
           fetchUsers(),
           fetchAdminSettings(),
           fetchProjectGroups(),
-          fetchProjects()
+          fetchProjects(),
+          fetchLdapSettings(),
         ]);
         setUsers(usersData);
         setSettings(settingsData);
         setGroups(groupsData);
         setSectionProjects(buildSections(groupsData, projectsData));
+        setLdap(prev => ({ ...prev, ...ldapData, bind_password: '' }));
       }
     } catch (err) {
       setError(err.message);
@@ -188,6 +200,38 @@ const Settings = () => {
     }
   };
 
+  const handleLdapSave = async () => {
+    setLdapSaving(true);
+    setLdapError(null);
+    setLdapSuccess(null);
+    try {
+      await updateLdapSettings(ldap);
+      setLdapSuccess(t('settings.ldap.saved'));
+    } catch (err) {
+      setLdapError(err.message);
+    } finally {
+      setLdapSaving(false);
+    }
+  };
+
+  const handleLdapTest = async () => {
+    setLdapTesting(true);
+    setLdapTestResult(null);
+    try {
+      const result = await testLdapConnection({
+        server_url: ldap.server_url,
+        bind_dn: ldap.bind_dn || null,
+        bind_password: ldap.bind_password || null,
+        tls_verify: ldap.tls_verify,
+      });
+      setLdapTestResult(result);
+    } catch (err) {
+      setLdapTestResult({ success: false, message: err.message });
+    } finally {
+      setLdapTesting(false);
+    }
+  };
+
   const renderProjectList = (sectionKey) => {
     const items = sectionProjects[sectionKey] || [];
     if (items.length === 0) {
@@ -312,6 +356,9 @@ const Settings = () => {
                     {user.id === currentUser.id && (
                       <span className="ml-2 text-xs text-primary">({t('settings.you')})</span>
                     )}
+                    {user.auth_source === 'ldap' && (
+                      <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 font-sans">LDAP</span>
+                    )}
                   </td>
                   <td className="px-4 py-3">
                     <select
@@ -361,6 +408,188 @@ const Settings = () => {
               )}
             </tbody>
           </table>
+        </div>
+      </div>
+
+      {/* LDAP Settings */}
+      <div className="bg-surface border border-border rounded-xl p-6">
+        <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+          <Network className="w-5 h-5" />
+          {t('settings.ldap.title')}
+        </h3>
+
+        {ldapError && (
+          <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400 text-sm flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 shrink-0" />{ldapError}
+          </div>
+        )}
+        {ldapSuccess && (
+          <div className="mb-4 p-3 bg-green-500/10 border border-green-500/20 rounded-lg text-green-400 text-sm flex items-center gap-2">
+            <Check className="w-4 h-4 shrink-0" />{ldapSuccess}
+          </div>
+        )}
+
+        {/* Enable toggle */}
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <p className="text-text">{t('settings.ldap.enable')}</p>
+            <p className="text-sm text-text-muted">{t('settings.ldap.enableHint')}</p>
+          </div>
+          <button
+            onClick={() => setLdap(p => ({ ...p, enabled: !p.enabled }))}
+            className={`relative w-14 h-7 rounded-full transition-colors ${ldap.enabled ? 'bg-primary' : 'bg-surface-hover'}`}
+          >
+            <span className={`absolute top-1 w-5 h-5 bg-white rounded-full transition-transform ${ldap.enabled ? 'left-8' : 'left-1'}`} />
+          </button>
+        </div>
+
+        <div className="space-y-4">
+          {/* Server + Base DN */}
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm text-text-muted mb-1">{t('settings.ldap.serverUrl')}</label>
+              <input
+                type="text"
+                value={ldap.server_url || ''}
+                onChange={e => setLdap(p => ({ ...p, server_url: e.target.value }))}
+                placeholder="ldaps://ipa.example.com"
+                className="w-full bg-background border border-border rounded px-3 py-2 text-text text-sm focus:outline-none focus:border-primary"
+              />
+            </div>
+            <div>
+              <label className="block text-sm text-text-muted mb-1">{t('settings.ldap.baseDn')}</label>
+              <input
+                type="text"
+                value={ldap.base_dn || ''}
+                onChange={e => setLdap(p => ({ ...p, base_dn: e.target.value }))}
+                placeholder="dc=example,dc=com"
+                className="w-full bg-background border border-border rounded px-3 py-2 text-text text-sm focus:outline-none focus:border-primary"
+              />
+            </div>
+          </div>
+
+          {/* User attribute */}
+          <div>
+            <label className="block text-sm text-text-muted mb-1">{t('settings.ldap.userAttr')}</label>
+            <select
+              value={ldap.user_attr || 'uid'}
+              onChange={e => setLdap(p => ({ ...p, user_attr: e.target.value }))}
+              className="bg-background border border-border rounded px-3 py-2 text-text text-sm focus:outline-none focus:border-primary"
+            >
+              <option value="uid">uid (FreeIPA / OpenLDAP)</option>
+              <option value="sAMAccountName">sAMAccountName (Active Directory)</option>
+              <option value="cn">cn</option>
+            </select>
+          </div>
+
+          {/* Bind DN template */}
+          <div>
+            <label className="block text-sm text-text-muted mb-1">{t('settings.ldap.bindDnTemplate')}</label>
+            <input
+              type="text"
+              value={ldap.bind_dn_template || ''}
+              onChange={e => setLdap(p => ({ ...p, bind_dn_template: e.target.value }))}
+              placeholder="uid={username},cn=users,cn=accounts,dc=example,dc=com"
+              className="w-full bg-background border border-border rounded px-3 py-2 text-text text-sm focus:outline-none focus:border-primary font-mono"
+            />
+            <p className="text-xs text-text-muted mt-1">{t('settings.ldap.bindDnTemplateHint')}</p>
+          </div>
+
+          {/* Service account */}
+          <div className="border-t border-border pt-4">
+            <p className="text-sm font-medium text-text-muted mb-3">{t('settings.ldap.serviceAccount')}</p>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm text-text-muted mb-1">{t('settings.ldap.bindDn')}</label>
+                <input
+                  type="text"
+                  value={ldap.bind_dn || ''}
+                  onChange={e => setLdap(p => ({ ...p, bind_dn: e.target.value }))}
+                  placeholder="cn=svc-rpmworks,dc=example,dc=com"
+                  className="w-full bg-background border border-border rounded px-3 py-2 text-text text-sm focus:outline-none focus:border-primary font-mono"
+                />
+              </div>
+              <div>
+                <label className="block text-sm text-text-muted mb-1">{t('settings.ldap.bindPassword')}</label>
+                <input
+                  type="password"
+                  value={ldap.bind_password || ''}
+                  onChange={e => setLdap(p => ({ ...p, bind_password: e.target.value }))}
+                  placeholder={t('settings.ldap.bindPasswordPlaceholder')}
+                  className="w-full bg-background border border-border rounded px-3 py-2 text-text text-sm focus:outline-none focus:border-primary"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Groups */}
+          <div className="border-t border-border pt-4">
+            <p className="text-sm font-medium text-text-muted mb-3">{t('settings.ldap.groups')}</p>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm text-text-muted mb-1">{t('settings.ldap.requiredGroup')}</label>
+                <input
+                  type="text"
+                  value={ldap.required_group_dn || ''}
+                  onChange={e => setLdap(p => ({ ...p, required_group_dn: e.target.value }))}
+                  placeholder="cn=rpmworks-users,cn=groups,cn=accounts,dc=..."
+                  className="w-full bg-background border border-border rounded px-3 py-2 text-text text-sm focus:outline-none focus:border-primary font-mono"
+                />
+                <p className="text-xs text-text-muted mt-1">{t('settings.ldap.requiredGroupHint')}</p>
+              </div>
+              <div>
+                <label className="block text-sm text-text-muted mb-1">{t('settings.ldap.adminGroup')}</label>
+                <input
+                  type="text"
+                  value={ldap.admin_group_dn || ''}
+                  onChange={e => setLdap(p => ({ ...p, admin_group_dn: e.target.value }))}
+                  placeholder="cn=rpmworks-admins,cn=groups,cn=accounts,dc=..."
+                  className="w-full bg-background border border-border rounded px-3 py-2 text-text text-sm focus:outline-none focus:border-primary font-mono"
+                />
+                <p className="text-xs text-text-muted mt-1">{t('settings.ldap.adminGroupHint')}</p>
+              </div>
+            </div>
+          </div>
+
+          {/* TLS verify */}
+          <div className="flex items-center gap-3">
+            <input
+              type="checkbox"
+              id="tls-verify"
+              checked={ldap.tls_verify}
+              onChange={e => setLdap(p => ({ ...p, tls_verify: e.target.checked }))}
+              className="w-4 h-4 accent-primary"
+            />
+            <label htmlFor="tls-verify" className="text-sm text-text">{t('settings.ldap.tlsVerify')}</label>
+          </div>
+
+          {/* Test result */}
+          {ldapTestResult && (
+            <div className={`p-3 rounded-lg text-sm flex items-center gap-2 ${ldapTestResult.success ? 'bg-green-500/10 border border-green-500/20 text-green-400' : 'bg-red-500/10 border border-red-500/20 text-red-400'}`}>
+              {ldapTestResult.success ? <Check className="w-4 h-4 shrink-0" /> : <X className="w-4 h-4 shrink-0" />}
+              {ldapTestResult.message}
+            </div>
+          )}
+
+          {/* Actions */}
+          <div className="flex gap-3 pt-2">
+            <button
+              onClick={handleLdapTest}
+              disabled={ldapTesting || !ldap.server_url}
+              className="flex items-center gap-2 px-4 py-2 bg-surface-hover hover:bg-border text-text rounded-lg text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {ldapTesting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Network className="w-4 h-4" />}
+              {t('settings.ldap.testConnection')}
+            </button>
+            <button
+              onClick={handleLdapSave}
+              disabled={ldapSaving}
+              className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary-hover text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {ldapSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+              {t('settings.ldap.save')}
+            </button>
+          </div>
         </div>
       </div>
 
