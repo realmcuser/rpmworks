@@ -169,6 +169,8 @@
     "sourceConfig": "Source Configuration",
     "preFetchScript": "Pre-Fetch Script",
     "preFetchScriptHint": "Script to run on the source server BEFORE files are fetched. Useful for creating a tar.gz archive, for example.",
+    "postBuildScript": "Post-Build Script",
+    "postBuildScriptHint": "Script to run on the source server AFTER a successful build. Runs over SSH. Build info is available as environment variables: RPMWORKS_BUILD_NUMBER, RPMWORKS_BUILD_EVR, RPMWORKS_PROJECT_NAME, RPMWORKS_RPM_FILES. Failures are logged as warnings and do not affect build status.",
     "runPrefetch": "Run now",
     "runPrefetchRunning": "Running...",
     "runPrefetchSuccess": "Script completed successfully",

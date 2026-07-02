@@ -53,6 +53,7 @@ class SourceConfig(Base):
     include_patterns = Column(JSON, default=list) # List of paths to include
     exclude_patterns = Column(JSON, default=list) # List of patterns to exclude
     pre_fetch_script = Column(String, nullable=True) # Script to run on remote BEFORE fetching files (e.g. create tar.gz)
+    post_build_script = Column(String, nullable=True) # Script to run on remote AFTER successful build (e.g. create git tag)
     remote_command = Column(String, nullable=True) # Command to run on remote to get version/tag string
 
     project = relationship("Project", back_populates="source_config")

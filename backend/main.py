@@ -32,6 +32,7 @@ with engine.connect() as _conn:
     _conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS project_group_id INTEGER REFERENCES project_groups(id) ON DELETE SET NULL"))
     _conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS group_order INTEGER NOT NULL DEFAULT 0"))
     _conn.execute(text("ALTER TABLE project_groups ADD COLUMN IF NOT EXISTS sort_order INTEGER NOT NULL DEFAULT 0"))
+    _conn.execute(text("ALTER TABLE source_configs ADD COLUMN IF NOT EXISTS post_build_script TEXT"))
     _conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_source VARCHAR NOT NULL DEFAULT 'local'"))
     _conn.commit()
 
@@ -289,6 +290,7 @@ class SourceConfig(BaseModel):
     include_patterns: List[str] = []
     exclude_patterns: List[str] = []
     pre_fetch_script: Optional[str] = None
+    post_build_script: Optional[str] = None
     remote_command: Optional[str] = None
 
     class Config:
@@ -331,6 +333,7 @@ class SourceConfigUpdate(BaseModel):
     include_patterns: Optional[List[str]] = None
     exclude_patterns: Optional[List[str]] = None
     pre_fetch_script: Optional[str] = None
+    post_build_script: Optional[str] = None
     remote_command: Optional[str] = None
 
 class BrowseRequest(BaseModel):
@@ -1100,11 +1103,6 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
         else:
             if not user.is_active:
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Account is disabled", headers={"WWW-Authenticate": "Bearer"})
-            if ldap_cfg.admin_group_dn:
-                new_role = "admin" if result.get("is_admin") else "user"
-                if user.role != new_role:
-                    user.role = new_role
-                    db.commit()
 
     access_token_expires = auth_utils.timedelta(minutes=auth_utils.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = auth_utils.create_access_token(
@@ -1296,6 +1294,7 @@ async def clone_project(project_id: int, req: ProjectCloneRequest, db: Session =
             include_patterns=src.include_patterns.copy() if src.include_patterns else [],
             exclude_patterns=src.exclude_patterns.copy() if src.exclude_patterns else [],
             pre_fetch_script=src.pre_fetch_script,
+            post_build_script=src.post_build_script,
             remote_command=src.remote_command
         )
         db.add(new_source)
@@ -1474,6 +1473,8 @@ async def update_source_config(project_id: int, config: SourceConfigUpdate, db: 
         db_source.exclude_patterns = config.exclude_patterns
     if config.pre_fetch_script is not None:
         db_source.pre_fetch_script = config.pre_fetch_script
+    if config.post_build_script is not None:
+        db_source.post_build_script = config.post_build_script
     if config.remote_command is not None:
         db_source.remote_command = config.remote_command
 

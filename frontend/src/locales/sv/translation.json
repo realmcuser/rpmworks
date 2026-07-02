@@ -169,6 +169,8 @@
     "sourceConfig": "Källkonfiguration",
     "preFetchScript": "Innan filhämtning",
     "preFetchScriptHint": "Skript som körs på källservern INNAN filer hämtas. Användbart för att t.ex. skapa ett tar.gz-arkiv.",
+    "postBuildScript": "Efter lyckat bygge",
+    "postBuildScriptHint": "Skript som körs på källservern EFTER ett lyckat bygge, via SSH. Bygginformation injiceras som miljövariabler: RPMWORKS_BUILD_NUMBER, RPMWORKS_BUILD_EVR, RPMWORKS_PROJECT_NAME, RPMWORKS_RPM_FILES. Fel loggas som varningar och påverkar inte byggresultatet.",
     "runPrefetch": "Kör nu",
     "runPrefetchRunning": "Kör...",
     "runPrefetchSuccess": "Skriptet kördes framgångsrikt",

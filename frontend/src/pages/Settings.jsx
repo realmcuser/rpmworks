@@ -38,6 +38,7 @@ const Settings = () => {
   const [ldapSuccess, setLdapSuccess] = useState(null);
   const [ldapTestResult, setLdapTestResult] = useState(null);
   const [ldapTesting, setLdapTesting] = useState(false);
+  const [savedRoleId, setSavedRoleId] = useState(null);
 
   useEffect(() => {
     loadData();
@@ -97,6 +98,8 @@ const Settings = () => {
     try {
       const updated = await updateUser(user.id, { role: newRole });
       setUsers(users.map(u => u.id === user.id ? updated : u));
+      setSavedRoleId(user.id);
+      setTimeout(() => setSavedRoleId(null), 1500);
     } catch (err) {
       alert(err.message);
     }
@@ -361,15 +364,20 @@ const Settings = () => {
                     )}
                   </td>
                   <td className="px-4 py-3">
-                    <select
-                      value={user.role}
-                      onChange={(e) => handleChangeRole(user, e.target.value)}
-                      disabled={user.id === currentUser.id}
-                      className="bg-background border border-border rounded px-2 py-1 text-text text-sm focus:outline-none focus:border-primary disabled:opacity-50"
-                    >
-                      <option value="admin">Admin</option>
-                      <option value="user">User</option>
-                    </select>
+                    <div className="flex items-center gap-2">
+                      <select
+                        value={user.role}
+                        onChange={(e) => handleChangeRole(user, e.target.value)}
+                        disabled={user.id === currentUser.id}
+                        className="bg-background border border-border rounded px-2 py-1 text-text text-sm focus:outline-none focus:border-primary disabled:opacity-50"
+                      >
+                        <option value="admin">Admin</option>
+                        <option value="user">User</option>
+                      </select>
+                      {savedRoleId === user.id && (
+                        <Check className="w-4 h-4 text-green-500" />
+                      )}
+                    </div>
                   </td>
                   <td className="px-4 py-3">
                     <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${

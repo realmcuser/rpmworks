@@ -60,3 +60,4 @@ DESIGN.md
 # Secrets and local config
 .env
 *.env
+post-run.md

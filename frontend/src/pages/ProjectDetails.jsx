@@ -48,7 +48,7 @@ const ProjectDetails = () => {
 
   // Edit state for Source tab
   const [sourceEditMode, setSourceEditMode] = useState(false);
-  const [sourceForm, setSourceForm] = useState({ pre_fetch_script: '', remote_command: '' });
+  const [sourceForm, setSourceForm] = useState({ pre_fetch_script: '', post_build_script: '', remote_command: '' });
 
   // Pre-fetch script run state
   const [prefetchRunning, setPrefetchRunning] = useState(false);
@@ -120,6 +120,7 @@ const ProjectDetails = () => {
         setNotesText(project.notes || '');
         setSourceForm({
             pre_fetch_script: project.source_config?.pre_fetch_script || '',
+            post_build_script: project.source_config?.post_build_script || '',
             remote_command: project.source_config?.remote_command || ''
         });
         setConnectionForm({
@@ -224,6 +225,7 @@ const ProjectDetails = () => {
               source_config: {
                   ...prev.source_config,
                   pre_fetch_script: sourceForm.pre_fetch_script,
+                  post_build_script: sourceForm.post_build_script,
                   remote_command: sourceForm.remote_command
               }
           }));
@@ -715,6 +717,26 @@ const ProjectDetails = () => {
                                 {prefetchResult.stderr && (
                                     <pre className="text-xs text-red-300 font-mono whitespace-pre-wrap break-all bg-background rounded px-2 py-1">{prefetchResult.stderr}</pre>
                                 )}
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Post-build script */}
+                    <div>
+                        <label className="text-sm font-medium text-text block mb-1">{t('project.postBuildScript')}</label>
+                        <p className="text-xs text-text-muted mb-2">
+                            {t('project.postBuildScriptHint')}
+                        </p>
+                        {sourceEditMode ? (
+                            <textarea
+                                value={sourceForm.post_build_script}
+                                onChange={(e) => setSourceForm(prev => ({ ...prev, post_build_script: e.target.value }))}
+                                className="w-full bg-background border border-border rounded px-3 py-2 text-text font-mono text-sm focus:outline-none focus:border-primary min-h-[80px]"
+                                placeholder="#!/bin/bash&#10;git tag rpm-${RPMWORKS_BUILD_EVR}"
+                            />
+                        ) : (
+                            <div className="bg-background border border-border rounded px-3 py-2 text-text font-mono text-sm min-h-[38px] whitespace-pre-wrap">
+                                {project.source_config?.post_build_script || <span className="text-text-muted italic">{t('project.notConfigured')}</span>}
                             </div>
                         )}
                     </div>

@@ -551,7 +551,41 @@ rm -rf %{{buildroot}}
                     
                     new_build.rpm_files = rpm_files
                     log_msg(f"Generated packages: {', '.join([os.path.basename(f) for f in rpm_files])}")
-                    
+
+                    # 6. Run post-build script (non-fatal — a script failure must not fail the build)
+                    if project.source_config.post_build_script:
+                        log_msg("Running post-build script...")
+                        ssh_post = SSHService()
+                        connected_post, msg_post = ssh_post.connect(
+                            project.source_config.host,
+                            project.source_config.username,
+                            None,
+                            project.source_config.ssh_key_path,
+                        )
+                        if not connected_post:
+                            log_msg(f"WARNING: Could not connect for post-build script: {msg_post}")
+                        else:
+                            rpm_files_str = " ".join([os.path.basename(f) for f in rpm_files])
+                            env_prefix = (
+                                f"export RPMWORKS_BUILD_NUMBER='{new_build.build_number}'\n"
+                                f"export RPMWORKS_BUILD_EVR='{build_evr}'\n"
+                                f"export RPMWORKS_PROJECT_NAME='{project.name}'\n"
+                                f"export RPMWORKS_RPM_FILES='{rpm_files_str}'\n"
+                            )
+                            full_script = env_prefix + "\n" + project.source_config.post_build_script
+                            code_post, out_post, err_post = ssh_post.execute_command(
+                                full_script, cwd=project.source_config.path
+                            )
+                            if out_post:
+                                log_msg(f"Post-build output:\n{out_post}")
+                            if err_post:
+                                log_msg(f"Post-build stderr:\n{err_post}")
+                            if code_post != 0:
+                                log_msg(f"WARNING: Post-build script failed (exit code {code_post}) — build result unchanged")
+                            else:
+                                log_msg("Post-build script completed successfully.")
+                            ssh_post.close()
+
                 else:
                     log_msg("Build FAILED.")
                     new_build.status = "failed"

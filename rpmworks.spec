@@ -83,7 +83,7 @@ python3 -m venv venv
 ./venv/bin/pip install --upgrade pip
 ./venv/bin/pip install \
     fastapi uvicorn sqlalchemy "psycopg[binary]" \
-    python-jose passlib argon2-cffi python-multipart paramiko
+    python-jose passlib argon2-cffi python-multipart paramiko ldap3
 
 chown -R rpmworks:rpmworks /var/lib/rpmworks /opt/rpmworks
 chmod 700 /opt/rpmworks/.ssh
