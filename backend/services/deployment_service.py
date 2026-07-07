@@ -112,14 +112,16 @@ class DeploymentService:
 
     def _extract_github_tag(self, build: Build) -> str:
         """Derive a GitHub release tag from the RPM filename.
-        e.g. rpmworks-1.0.0-15.el9.x86_64.rpm → v1.0.0-15
+        e.g. nspawn-vault-web-0.1.0-6.el9.noarch.rpm → nspawn-vault-web-v0.1.0-6
+        Includes the package name so multiple packages sharing the same repo
+        never produce colliding tags.
         Falls back to v{version} if the pattern doesn't match.
         """
         if build.rpm_files:
             fname = os.path.basename(build.rpm_files[0])
-            m = re.search(r'-(\d[\d.]*)-(\d+)\.', fname)
+            m = re.match(r'^(.+?)-(\d[\d.]*)-(\d+)\.', fname)
             if m:
-                return f"v{m.group(1)}-{m.group(2)}"
+                return f"{m.group(1)}-v{m.group(2)}-{m.group(3)}"
         return f"v{build.version or '0.0.0'}"
 
     def _deploy_to_github(self, build: Build, repo: Repository):
