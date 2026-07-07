@@ -433,7 +433,7 @@ def _repo_to_response(repo):
         repo_type=getattr(repo, 'repo_type', 'ssh') or 'ssh',
         host=repo.host,
         username=repo.username,
-        password=repo.password,
+        password="********" if repo.password else None,
         ssh_key_path=repo.ssh_key_path,
         description=repo.description,
         github_repo=getattr(repo, 'github_repo', None),
@@ -482,7 +482,10 @@ async def update_repository(repo_id: int, repo_data: RepositoryCreate, db: Sessi
     repo.repo_type = repo_data.repo_type
     repo.host = repo_data.host
     repo.username = repo_data.username
-    repo.password = repo_data.password
+    if repo_data.password is None:
+        repo.password = None  # explicit clear (e.g. switching to key auth)
+    elif repo_data.password not in ("", "********"):
+        repo.password = repo_data.password
     repo.ssh_key_path = repo_data.ssh_key_path
     repo.description = repo_data.description
     repo.github_repo = repo_data.github_repo
