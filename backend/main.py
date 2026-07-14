@@ -970,7 +970,10 @@ async def _cron_scheduler_loop():
         return
     while True:
         await asyncio.sleep(60)
-        now = datetime.now(timezone.utc)
+        now_utc = datetime.now(timezone.utc)
+        # Cron expressions are evaluated in server local time so that
+        # e.g. "33 21 * * *" means 21:33 local, not 21:33 UTC.
+        now_local = datetime.now()
         db = SessionLocal()
         try:
             projects = db.query(models.Project).filter(
@@ -978,12 +981,14 @@ async def _cron_scheduler_loop():
             ).all()
             for project in projects:
                 try:
-                    cron = CronIter(project.cron_schedule, now)
-                    prev_due = cron.get_prev(datetime)
+                    cron = CronIter(project.cron_schedule, now_local)
+                    prev_due = cron.get_prev(datetime)  # naive local datetime
                     last_run = project.cron_last_run
-                    if last_run is None or prev_due > last_run:
+                    # Convert tz-aware last_run to naive local for comparison
+                    last_run_local = last_run.astimezone().replace(tzinfo=None) if last_run else None
+                    if last_run_local is None or prev_due > last_run_local:
                         print(f"Cron: triggering scheduled build for '{project.name}'")
-                        project.cron_last_run = now
+                        project.cron_last_run = now_utc
                         db.commit()
                         _trigger_cron_build(project.id)
                 except Exception as e:
