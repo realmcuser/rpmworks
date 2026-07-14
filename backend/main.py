@@ -1515,6 +1515,7 @@ async def get_project(project_id: int, db: Session = Depends(get_db), current_us
         max_builds=project.max_builds,
         notes=project.notes,
         user_id=project.user_id,
+        cron_schedule=project.cron_schedule,
         source_config=project.source_config,
         build_config=build_config_data,
         builds=project.builds,
