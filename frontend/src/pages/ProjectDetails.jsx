@@ -77,6 +77,7 @@ const ProjectDetails = () => {
   const [cronInput, setCronInput] = useState('');
   const [savingCron, setSavingCron] = useState(false);
   const [cronSaved, setCronSaved] = useState(false);
+  const [cronError, setCronError] = useState(null);
 
   // Connection edit modal state
   const [isConnectionModalOpen, setIsConnectionModalOpen] = useState(false);
@@ -241,15 +242,26 @@ const ProjectDetails = () => {
       }
   };
 
+  const isCronValid = (val) => {
+      if (!val) return true;
+      return val.trim().split(/\s+/).length === 5;
+  };
+
   const handleSaveCron = async () => {
+      const val = cronInput.trim() || null;
+      if (val && !isCronValid(val)) {
+          setCronError(t('project.cronInvalidExpression'));
+          return;
+      }
+      setCronError(null);
       setSavingCron(true);
       try {
-          await updateProjectDetails(project.id, { cron_schedule: cronInput.trim() || null });
-          setProject(prev => ({ ...prev, cron_schedule: cronInput.trim() || null }));
+          await updateProjectDetails(project.id, { cron_schedule: val });
+          setProject(prev => ({ ...prev, cron_schedule: val }));
           setCronSaved(true);
           setTimeout(() => setCronSaved(false), 2000);
       } catch (err) {
-          alert("Failed to save schedule: " + err.message);
+          setCronError(err.message || t('project.cronSaveFailed'));
       } finally {
           setSavingCron(false);
       }
@@ -772,25 +784,26 @@ const ProjectDetails = () => {
                             <input
                                 type="text"
                                 value={cronInput}
-                                onChange={e => setCronInput(e.target.value)}
+                                onChange={e => { setCronInput(e.target.value); setCronError(null); }}
                                 placeholder={t('project.cronExpressionPlaceholder')}
-                                className="flex-1 bg-background border border-border rounded px-3 py-2 text-text font-mono text-sm focus:outline-none focus:border-primary"
+                                className={`flex-1 bg-background border rounded px-3 py-2 text-text font-mono text-sm focus:outline-none ${cronError ? 'border-red-500 focus:border-red-500' : 'border-border focus:border-primary'}`}
                             />
                             <button
                                 onClick={handleSaveCron}
-                                disabled={savingCron}
+                                disabled={savingCron || !!cronError}
                                 className="px-3 py-2 bg-primary/10 text-primary hover:bg-primary/20 rounded-lg text-sm transition-colors disabled:opacity-50 flex items-center gap-1"
                             >
                                 {cronSaved ? <Check className="w-4 h-4" /> : <Save className="w-4 h-4" />}
                                 {cronSaved ? t('project.cronSaved') : t('project.cronSave')}
                             </button>
                             <button
-                                onClick={() => { setCronInput(''); handleSaveCron(); }}
+                                onClick={() => { setCronInput(''); setCronError(null); handleSaveCron(); }}
                                 className="px-3 py-2 text-text-muted hover:text-red-400 hover:bg-red-400/10 rounded-lg text-sm transition-colors"
                             >
                                 {t('project.cronDisable')}
                             </button>
                         </div>
+                        {cronError && <p className="text-xs text-red-400">{cronError}</p>}
                         <p className="text-xs text-text-muted">{t('project.cronExpressionHint')}</p>
                     </div>
                 ) : (
@@ -800,19 +813,20 @@ const ProjectDetails = () => {
                             <input
                                 type="text"
                                 value={cronInput}
-                                onChange={e => setCronInput(e.target.value)}
+                                onChange={e => { setCronInput(e.target.value); setCronError(null); }}
                                 placeholder={t('project.cronExpressionPlaceholder')}
-                                className="flex-1 bg-background border border-border rounded px-3 py-2 text-text font-mono text-sm focus:outline-none focus:border-primary"
+                                className={`flex-1 bg-background border rounded px-3 py-2 text-text font-mono text-sm focus:outline-none ${cronError ? 'border-red-500 focus:border-red-500' : 'border-border focus:border-primary'}`}
                             />
                             <button
                                 onClick={handleSaveCron}
-                                disabled={savingCron || !cronInput.trim()}
+                                disabled={savingCron || !cronInput.trim() || !!cronError}
                                 className="px-3 py-2 bg-primary/10 text-primary hover:bg-primary/20 rounded-lg text-sm transition-colors disabled:opacity-50 flex items-center gap-1"
                             >
                                 <Check className="w-4 h-4" />
                                 {t('project.cronEnable')}
                             </button>
                         </div>
+                        {cronError && <p className="text-xs text-red-400">{cronError}</p>}
                         <p className="text-xs text-text-muted">{t('project.cronExpressionHint')}</p>
                     </div>
                 )}

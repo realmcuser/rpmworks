@@ -180,6 +180,8 @@
     "cronDisable": "Disable",
     "cronSave": "Save schedule",
     "cronSaved": "Schedule saved",
+    "cronInvalidExpression": "Invalid cron expression — must have exactly 5 fields: minute hour day month weekday",
+    "cronSaveFailed": "Failed to save schedule",
     "runPrefetch": "Run now",
     "runPrefetchRunning": "Running...",
     "runPrefetchSuccess": "Script completed successfully",

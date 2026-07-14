@@ -180,6 +180,8 @@
     "cronDisable": "Avaktivera",
     "cronSave": "Spara schema",
     "cronSaved": "Schema sparat",
+    "cronInvalidExpression": "Ogiltigt cron-uttryck — måste ha exakt 5 fält: minut timme dag månad veckodag",
+    "cronSaveFailed": "Kunde inte spara schemat",
     "runPrefetch": "Kör nu",
     "runPrefetchRunning": "Kör...",
     "runPrefetchSuccess": "Skriptet kördes framgångsrikt",

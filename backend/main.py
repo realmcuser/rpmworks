@@ -1323,7 +1323,13 @@ async def update_project(project_id: int, project_update: ProjectUpdate, db: Ses
         project.project_group_id = project_update.project_group_id
 
     if "cron_schedule" in project_update.model_fields_set:
-        project.cron_schedule = project_update.cron_schedule or None
+        new_schedule = project_update.cron_schedule or None
+        if new_schedule is not None:
+            if not _CRONITER_AVAILABLE:
+                raise HTTPException(status_code=500, detail="croniter not installed — cannot validate cron expression")
+            if not CronIter.is_valid(new_schedule):
+                raise HTTPException(status_code=400, detail=f"Invalid cron expression: '{new_schedule}'. Expected 5 fields (minute hour day month weekday), e.g. '15 21 * * *'")
+        project.cron_schedule = new_schedule
 
     db.commit()
     db.refresh(project)
