@@ -4,10 +4,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
+import asyncio
 import time
 import os
 import ssl
+try:
+    from croniter import croniter as CronIter
+    _CRONITER_AVAILABLE = True
+except ImportError:
+    _CRONITER_AVAILABLE = False
 from sqlalchemy import text, func
 from sqlalchemy.orm import Session
 from services.ssh_service import SSHService
@@ -34,6 +40,8 @@ with engine.connect() as _conn:
     _conn.execute(text("ALTER TABLE project_groups ADD COLUMN IF NOT EXISTS sort_order INTEGER NOT NULL DEFAULT 0"))
     _conn.execute(text("ALTER TABLE source_configs ADD COLUMN IF NOT EXISTS post_build_script TEXT"))
     _conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_source VARCHAR NOT NULL DEFAULT 'local'"))
+    _conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS cron_schedule VARCHAR"))
+    _conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS cron_last_run TIMESTAMPTZ"))
     _conn.commit()
 
 def _ldap_authenticate(username: str, password: str, cfg: models.LdapSettings) -> Optional[dict]:
@@ -117,6 +125,10 @@ def _ldap_test_connection(server_url: str, bind_dn: Optional[str], bind_password
 
 
 app = FastAPI(title="RPM Works API")
+
+@app.on_event("startup")
+async def startup_event():
+    asyncio.create_task(_cron_scheduler_loop())
 
 # Configure CORS
 app.add_middleware(
@@ -235,6 +247,7 @@ class ProjectUpdate(BaseModel):
     max_builds: Optional[int] = None
     notes: Optional[str] = None
     project_group_id: Optional[int] = None
+    cron_schedule: Optional[str] = None
 
 class ProjectCreate(ProjectBase):
     host: str
@@ -253,6 +266,7 @@ class Project(ProjectBase):
     user_id: Optional[int] = None
     project_group_id: Optional[int] = None
     group_order: int = 0
+    cron_schedule: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -867,22 +881,131 @@ def auto_deploy_build(build, project_id, db):
         print(f"Auto-publish to target {target.id}: {deployment.status}")
 
 
-def _start_build_for_project(project: models.Project, changelog_message: Optional[str], background_tasks: BackgroundTasks, db: Session):
-    """Core build-starting logic, shared between single-project and build-group endpoints."""
-    # Get target distributions from project_distributions
+def _run_sequential_builds(build_ids: list, project_id: int, build_number: int, previous_status: str):
+    """Run builds one at a time. Handles 'skipped' (exit 42) and propagates it to remaining builds."""
+    skip_remaining = False
+    any_failed = False
+    for bid in build_ids:
+        db_inner = SessionLocal()
+        try:
+            build = db_inner.query(models.Build).filter(models.Build.id == bid).first()
+            if not build:
+                continue
+
+            if skip_remaining:
+                build.status = "skipped"
+                db_inner.commit()
+                continue
+
+            build.status = "running"
+            db_inner.commit()
+
+            builder = RPMWorks()
+            builder.start_build(bid, project_id, SessionLocal)
+
+            db_inner.refresh(build)
+
+            if build.status == "skipped":
+                skip_remaining = True
+            elif build.status == "success":
+                auto_deploy_build(build, project_id, db_inner)
+            else:
+                any_failed = True
+        except Exception as e:
+            print(f"Build {bid} error: {e}")
+            any_failed = True
+        finally:
+            db_inner.close()
+
+    db_final = SessionLocal()
+    try:
+        proj = db_final.query(models.Project).filter(models.Project.id == project_id).first()
+        if proj:
+            all_builds = db_final.query(models.Build).filter(
+                models.Build.build_number == build_number,
+                models.Build.project_id == project_id
+            ).all()
+            statuses = [b.status for b in all_builds]
+            if all(s == "skipped" for s in statuses):
+                proj.status = previous_status  # restore pre-build status — nothing happened
+            elif all(s in ("success", "skipped") for s in statuses):
+                proj.status = "success"
+            elif any(s == "failed" for s in statuses):
+                proj.status = "failed"
+            else:
+                proj.status = "success"
+            db_final.commit()
+    except Exception as e:
+        print(f"Final status update error: {e}")
+    finally:
+        db_final.close()
+
+
+def _trigger_cron_build(project_id: int):
+    """Called by the cron scheduler: create build records and launch sequential runner in a thread."""
+    import threading
+    db = SessionLocal()
+    try:
+        project = db.query(models.Project).filter(models.Project.id == project_id).first()
+        if not project or project.status == "running":
+            return
+        result = _start_build_core(project, "Scheduled build", db)
+        if result is None:
+            return
+        build_ids, build_number, previous_status = result
+    finally:
+        db.close()
+    t = threading.Thread(
+        target=_run_sequential_builds,
+        args=(build_ids, project_id, build_number, previous_status),
+        daemon=True
+    )
+    t.start()
+
+
+async def _cron_scheduler_loop():
+    """Wakes up every minute and triggers builds for projects with a due cron schedule."""
+    if not _CRONITER_AVAILABLE:
+        print("WARNING: croniter not installed — scheduled builds disabled")
+        return
+    while True:
+        await asyncio.sleep(60)
+        now = datetime.now(timezone.utc)
+        db = SessionLocal()
+        try:
+            projects = db.query(models.Project).filter(
+                models.Project.cron_schedule.isnot(None)
+            ).all()
+            for project in projects:
+                try:
+                    cron = CronIter(project.cron_schedule, now)
+                    prev_due = cron.get_prev(datetime)
+                    last_run = project.cron_last_run
+                    if last_run is None or prev_due > last_run:
+                        print(f"Cron: triggering scheduled build for '{project.name}'")
+                        project.cron_last_run = now
+                        db.commit()
+                        _trigger_cron_build(project.id)
+                except Exception as e:
+                    print(f"Cron scheduler error for project '{project.name}': {e}")
+        except Exception as e:
+            print(f"Cron scheduler loop error: {e}")
+        finally:
+            db.close()
+
+
+def _start_build_core(project: models.Project, changelog_message: Optional[str], db: Session):
+    """Create Build records and update project status. Returns (build_ids, build_number, previous_status) or None on error."""
     target_distros = [d.id for d in project.distributions]
     if not target_distros:
-        raise HTTPException(status_code=400, detail="No target distributions configured for this project")
+        return None
 
-    # Auto-increment Release Logic (once for all distros)
-    # Finds the LAST digit sequence in the release string and increments it.
-    # Examples: "13%(?dist)" → "14%(?dist)", "%(timestamp).1.15%(?dist)" → "%(timestamp).1.16%(?dist)"
     build_config = project.build_config
     if build_config and build_config.auto_increment_release:
         try:
-            import re
+            import re as _re
             current_release = build_config.release or "0"
-            matches = list(re.finditer(r'\d+', current_release))
+            matches = list(_re.finditer(r'\d+', current_release))
             if matches:
                 last_match = matches[-1]
                 num = int(last_match.group()) + 1
@@ -890,38 +1013,31 @@ def _start_build_for_project(project: models.Project, changelog_message: Optiona
                 build_config.release = new_release
                 db.commit()
                 db.refresh(project)
-                print(f"Auto-incremented release: {current_release} -> {new_release}")
         except Exception as e:
             print(f"Failed to auto-increment release: {e}")
 
-    # Build Retention Policy - count distinct build_numbers
     max_builds = project.max_builds if project.max_builds is not None else 10
-
     from sqlalchemy import func as sa_func, distinct
     distinct_build_numbers = db.query(sa_func.count(distinct(models.Build.build_number))).filter(
         models.Build.project_id == project.id
     ).scalar() or 0
 
     if distinct_build_numbers >= max_builds:
-        # Find oldest build_numbers to delete
         to_delete_count = distinct_build_numbers - max_builds + 1
         oldest_numbers = db.query(models.Build.build_number).filter(
             models.Build.project_id == project.id
         ).group_by(models.Build.build_number).order_by(models.Build.build_number.asc()).limit(to_delete_count).all()
         oldest_numbers = [r[0] for r in oldest_numbers]
-
         if oldest_numbers:
             builds_to_delete = db.query(models.Build).filter(
                 models.Build.project_id == project.id,
                 models.Build.build_number.in_(oldest_numbers)
             ).all()
-            print(f"Retention policy: Deleting {len(builds_to_delete)} builds for {len(oldest_numbers)} build numbers (Max: {max_builds})")
             for b in builds_to_delete:
                 delete_build_files(b.id)
                 db.delete(b)
             db.commit()
 
-    # Create one Build record per distribution, sharing the same build_number
     build_number = int(time.time())
     started_at = time.strftime("%Y-%m-%d %H:%M:%S")
     build_ids = []
@@ -941,63 +1057,21 @@ def _start_build_for_project(project: models.Project, changelog_message: Optiona
         db.refresh(new_build)
         build_ids.append(new_build.id)
 
-    # Update Project status and last_build
+    previous_status = project.status
     project.status = "running"
     project.last_build = started_at
     db.commit()
     db.refresh(project)
+    return build_ids, build_number, previous_status
 
-    # Launch sequential builds in background
-    def run_sequential_builds(build_ids, project_id):
-        any_failed = False
-        for bid in build_ids:
-            db_inner = SessionLocal()
-            try:
-                build = db_inner.query(models.Build).filter(models.Build.id == bid).first()
-                if not build:
-                    continue
 
-                build.status = "running"
-                db_inner.commit()
-
-                builder = RPMWorks()
-                builder.start_build(bid, project_id, SessionLocal)
-
-                # Refresh to get updated status
-                db_inner.refresh(build)
-
-                if build.status == "success":
-                    auto_deploy_build(build, project_id, db_inner)
-                else:
-                    any_failed = True
-            except Exception as e:
-                print(f"Build {bid} error: {e}")
-                any_failed = True
-            finally:
-                db_inner.close()
-
-        # Update project status based on all builds
-        db_final = SessionLocal()
-        try:
-            proj = db_final.query(models.Project).filter(models.Project.id == project_id).first()
-            if proj:
-                all_builds = db_final.query(models.Build).filter(
-                    models.Build.build_number == build_number,
-                    models.Build.project_id == project_id
-                ).all()
-                statuses = [b.status for b in all_builds]
-                if all(s == "success" for s in statuses):
-                    proj.status = "success"
-                elif any(s == "failed" for s in statuses):
-                    proj.status = "failed"
-                db_final.commit()
-        except Exception as e:
-            print(f"Final status update error: {e}")
-        finally:
-            db_final.close()
-
-    background_tasks.add_task(run_sequential_builds, build_ids, project.id)
-
+def _start_build_for_project(project: models.Project, changelog_message: Optional[str], background_tasks: BackgroundTasks, db: Session):
+    """Core build-starting logic, shared between single-project and build-group endpoints."""
+    result = _start_build_core(project, changelog_message, db)
+    if result is None:
+        raise HTTPException(status_code=400, detail="No target distributions configured for this project")
+    build_ids, build_number, previous_status = result
+    background_tasks.add_task(_run_sequential_builds, build_ids, project.id, build_number, previous_status)
     return {"message": "Build started", "project_id": project.id, "build_ids": build_ids, "build_number": build_number}
 
 
@@ -1247,6 +1321,9 @@ async def update_project(project_id: int, project_update: ProjectUpdate, db: Ses
             if not group:
                 raise HTTPException(status_code=404, detail="Project group not found")
         project.project_group_id = project_update.project_group_id
+
+    if "cron_schedule" in project_update.model_fields_set:
+        project.cron_schedule = project_update.cron_schedule or None
 
     db.commit()
     db.refresh(project)

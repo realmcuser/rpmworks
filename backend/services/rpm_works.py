@@ -309,7 +309,13 @@ rm -rf %{{buildroot}}
                     if err:
                         log_msg(f"Pre-fetch stderr:\n{err}")
 
-                    if code != 0:
+                    if code == 42:
+                        log_msg("Pre-fetch script returned exit code 42 — nothing to do, skipping build.")
+                        build.status = "skipped"
+                        build.completed_at = time.strftime("%Y-%m-%d %H:%M:%S")
+                        db.commit()
+                        return
+                    elif code != 0:
                         raise Exception(f"Pre-fetch script failed (exit code {code})")
 
                     log_msg("Pre-fetch script completed successfully.")
