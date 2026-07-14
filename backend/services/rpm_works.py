@@ -459,6 +459,21 @@ rm -rf %{{buildroot}}
                 run_root = "/tmp/podman-run-rpmworks"
                 os.makedirs(run_root, exist_ok=True)
 
+                # Auto-recover from stale boot-ID state left after a host reboot.
+                # The runroot lives in /tmp (tmpfs) so it disappears on reboot, but
+                # /run/libpod may linger. Podman detects the mismatch and refuses to
+                # run — we clear both dirs and let podman reinitialise cleanly.
+                _probe = subprocess.run(
+                    ["podman", "--root", storage_root, "--runroot", run_root, "info"],
+                    capture_output=True, text=True
+                )
+                if "boot ID" in _probe.stderr:
+                    log_msg("Podman: stale boot-ID detected after reboot — clearing state and continuing.")
+                    import shutil
+                    for _p in [run_root, "/run/libpod"]:
+                        shutil.rmtree(_p, ignore_errors=True)
+                    os.makedirs(run_root, exist_ok=True)
+
                 # Cached builder image with deps preinstalled, keyed by a hash of the deps list
                 # so a new image is built automatically whenever build_requires changes.
                 deps_hash = hashlib.md5(" ".join(sorted(deps)).encode()).hexdigest()[:8]
