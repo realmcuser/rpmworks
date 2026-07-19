@@ -128,6 +128,27 @@ app = FastAPI(title="RPM Works API")
 
 @app.on_event("startup")
 async def startup_event():
+    # Mark any builds left as "running" from a previous crash/reboot as failed
+    db = SessionLocal()
+    try:
+        stuck_builds = db.query(models.Build).filter(models.Build.status == "running").all()
+        if stuck_builds:
+            print(f"Startup: marking {len(stuck_builds)} stuck running build(s) as failed (server was restarted mid-build)")
+            for b in stuck_builds:
+                b.status = "failed"
+                if b.build_log:
+                    b.build_log += "\n[Server restarted — build aborted]"
+                else:
+                    b.build_log = "[Server restarted — build aborted]"
+        stuck_projects = db.query(models.Project).filter(models.Project.status == "running").all()
+        for project in stuck_projects:
+            latest = db.query(models.Build).filter(
+                models.Build.project_id == project.id
+            ).order_by(models.Build.id.desc()).first()
+            project.status = latest.status if latest else "idle"
+        db.commit()
+    finally:
+        db.close()
     asyncio.create_task(_cron_scheduler_loop())
 
 # Configure CORS
@@ -1288,9 +1309,23 @@ async def delete_build(build_id: int, db: Session = Depends(get_db), current_use
     if not check_project_access(build.project, current_user):
         raise HTTPException(status_code=403, detail="Access denied")
 
+    project = build.project
     delete_build_files(build_id)
-
     db.delete(build)
+    db.flush()
+
+    # If the project was stuck as "running", recalculate its status from remaining builds
+    if project and project.status == "running":
+        remaining = db.query(models.Build).filter(
+            models.Build.project_id == project.id,
+            models.Build.status == "running"
+        ).first()
+        if not remaining:
+            latest = db.query(models.Build).filter(
+                models.Build.project_id == project.id
+            ).order_by(models.Build.id.desc()).first()
+            project.status = latest.status if latest else "idle"
+
     db.commit()
     return None
 
