@@ -198,11 +198,21 @@ export async function deleteBuild(buildId) {
   const response = await fetchWithAuth(`/api/builds/${buildId}`, {
     method: 'DELETE',
   });
-  
+
   if (!response.ok) {
     throw new Error('Failed to delete build');
   }
-  return true; 
+  return true;
+}
+
+export async function cancelBuild(buildId) {
+  const response = await fetchWithAuth(`/api/builds/${buildId}/cancel`, {
+    method: 'POST',
+  });
+  if (!response.ok) {
+    throw new Error('Failed to cancel build');
+  }
+  return true;
 }
 
 export async function fetchDistributions() {

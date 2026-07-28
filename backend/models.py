@@ -32,6 +32,7 @@ class Project(Base):
     group_order = Column(Integer, default=0, nullable=False)
     cron_schedule = Column(String, nullable=True)  # cron expression (null = disabled)
     cron_last_run = Column(DateTime(timezone=True), nullable=True)
+    max_build_minutes = Column(Integer, default=15, nullable=False, server_default="15")
 
     # Relationships
     owner = relationship("User", back_populates="projects")

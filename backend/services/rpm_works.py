@@ -5,9 +5,14 @@ import time
 import re
 import hashlib
 import fcntl
+import threading
 from typing import List
 from models import Project, BuildConfig, Build, Distribution
 from services.ssh_service import SSHService
+
+
+class BuildCancelled(Exception):
+    pass
 
 BUILD_ROOT = os.getenv("WORKSPACE_DIR", os.path.abspath("build-workspace"))
 
@@ -251,13 +256,13 @@ rm -rf %{{buildroot}}
         build_evr = f"{ver_val}-{rel_val}"
         return spec_path, build_evr
 
-    def start_build(self, build_id: int, project_id: int, SessionLocal):
+    def start_build(self, build_id: int, project_id: int, SessionLocal, cancel_event=None, max_build_minutes: int = 15):
         db_session = SessionLocal()
         try:
             # Fetch existing build and project
             new_build = db_session.query(Build).filter(Build.id == build_id).first()
             project = db_session.query(Project).filter(Project.id == project_id).first()
-            
+
             if not new_build:
                 print(f"Build {build_id} not found.")
                 return
@@ -266,15 +271,46 @@ rm -rf %{{buildroot}}
                 return
 
             log = []
-            
+            build_start_time = time.time()
+
             def log_msg(msg):
                 timestamp = time.strftime("%H:%M:%S")
                 line = f"[{timestamp}] {msg}"
                 print(line)
                 log.append(line)
-                # Update DB periodically (in real app streaming is better)
                 new_build.build_log = "\n".join(log)
                 db_session.commit()
+
+            def check_cancel(phase=""):
+                if cancel_event and cancel_event.is_set():
+                    raise BuildCancelled(f"Cancelled by user{(' during ' + phase) if phase else ''}")
+                elapsed = time.time() - build_start_time
+                if elapsed > max_build_minutes * 60:
+                    raise BuildCancelled(f"Build timed out after {max_build_minutes} minutes{(' during ' + phase) if phase else ''}")
+
+            def ssh_exec_with_cancel(ssh_client, command, cwd, phase=""):
+                """Run ssh.execute_command in a thread; poll cancel_event and timeout."""
+                holder = {}
+                done_evt = threading.Event()
+
+                def _run():
+                    try:
+                        code, out, err = ssh_client.execute_command(command, cwd=cwd)
+                        holder['code'] = code
+                        holder['out'] = out
+                        holder['err'] = err
+                    except Exception as exc:
+                        holder['error'] = str(exc)
+                    finally:
+                        done_evt.set()
+
+                t = threading.Thread(target=_run, daemon=True)
+                t.start()
+                while not done_evt.wait(timeout=5):
+                    check_cancel(phase)
+                if 'error' in holder:
+                    raise Exception(holder['error'])
+                return holder['code'], holder['out'], holder['err']
 
             try:
                 log_msg(f"Starting build for {project.name}...")
@@ -302,7 +338,7 @@ rm -rf %{{buildroot}}
                 if project.source_config.pre_fetch_script:
                     log_msg(f"Running pre-fetch script...")
                     cwd = project.source_config.path
-                    code, out, err = ssh.execute_command(project.source_config.pre_fetch_script, cwd=cwd)
+                    code, out, err = ssh_exec_with_cancel(ssh, project.source_config.pre_fetch_script, cwd=cwd, phase="pre-fetch script")
 
                     if out:
                         log_msg(f"Pre-fetch output:\n{out}")
@@ -353,9 +389,8 @@ rm -rf %{{buildroot}}
                             project.source_config.ssh_key_path
                         )
                         if connected:
-                            # Run in the source directory if possible, or home
                             cwd = project.source_config.path
-                            code, out, err = ssh.execute_command(project.source_config.remote_command, cwd=cwd)
+                            code, out, err = ssh_exec_with_cancel(ssh, project.source_config.remote_command, cwd=cwd, phase="remote command")
                             ssh.close()
 
                             if code == 0:
@@ -547,14 +582,25 @@ rm -rf %{{buildroot}}
                 log_msg(f"Command: {full_container_cmd}")
                 
                 process = subprocess.Popen(
-                    podman_cmd, 
-                    stdout=subprocess.PIPE, 
+                    podman_cmd,
+                    stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     text=True
                 )
-                
-                stdout, stderr = process.communicate()
-                
+
+                stdout = stderr = ""
+                while True:
+                    try:
+                        stdout, stderr = process.communicate(timeout=5)
+                        break
+                    except subprocess.TimeoutExpired:
+                        try:
+                            check_cancel("RPM build")
+                        except BuildCancelled:
+                            process.kill()
+                            process.communicate()
+                            raise
+
                 if stdout: log_msg(stdout)
                 if stderr: log_msg(stderr)
                 
@@ -612,11 +658,16 @@ rm -rf %{{buildroot}}
                     new_build.status = "failed"
                     project.status = "failed"
                     
+            except BuildCancelled as e:
+                log_msg(f"BUILD CANCELLED: {str(e)}")
+                new_build.status = "cancelled"
+                project.status = "failed"
+
             except Exception as e:
                 log_msg(f"CRITICAL ERROR: {str(e)}")
                 new_build.status = "failed"
                 project.status = "failed"
-            
+
             finally:
                 new_build.completed_at = time.strftime("%Y-%m-%d %H:%M:%S")
                 new_build.build_log = "\n".join(log)

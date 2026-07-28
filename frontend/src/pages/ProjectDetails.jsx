@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { ArrowLeft, Server, Box, Activity, Settings, Terminal, Play, Save, Download, ChevronDown, ChevronUp, Edit2, X, Check, Trash2, Copy, AlertTriangle, Key, FileText, Loader2 } from 'lucide-react';
-import { fetchWithAuth, startBuild, updateProjectDetails, deleteBuild, deleteProject, updateSourceConfig, cloneProject, runPrefetchScript, fetchProjectGroups } from '../services/api';
+import { ArrowLeft, Server, Box, Activity, Settings, Terminal, Play, Save, Download, ChevronDown, ChevronUp, Edit2, X, Check, Trash2, Copy, AlertTriangle, Key, FileText, Loader2, StopCircle } from 'lucide-react';
+import { fetchWithAuth, startBuild, updateProjectDetails, deleteBuild, deleteProject, updateSourceConfig, cloneProject, runPrefetchScript, fetchProjectGroups, cancelBuild } from '../services/api';
 import SourceBrowserModal from '../components/SourceManager/SourceBrowserModal';
 import SpecEditor from '../components/BuildManager/SpecEditor';
 import FileMapper from '../components/BuildManager/FileMapper';
@@ -43,7 +43,8 @@ const ProjectDetails = () => {
   
   // Edit state for overview
   const [isEditing, setIsEditing] = useState(false);
-  const [editForm, setEditForm] = useState({ name: '', description: '', max_builds: 10, project_group_id: null });
+  const [editForm, setEditForm] = useState({ name: '', description: '', max_builds: 10, max_build_minutes: 15, project_group_id: null });
+  const [cancelling, setCancelling] = useState(false);
   const [projectGroups, setProjectGroups] = useState([]);
 
   // Edit state for Source tab
@@ -121,6 +122,7 @@ const ProjectDetails = () => {
             name: project.name,
             description: project.description || '',
             max_builds: project.max_builds || 10,
+            max_build_minutes: project.max_build_minutes || 15,
             project_group_id: project.project_group_id || null
         });
         setNotesText(project.notes || '');
@@ -174,6 +176,20 @@ const ProjectDetails = () => {
     }
   };
 
+  const handleCancelBuild = async () => {
+      const runningBuild = project?.builds?.find(b => b.status === 'running');
+      if (!runningBuild) return;
+      setCancelling(true);
+      try {
+          await cancelBuild(runningBuild.id);
+          await loadProject();
+      } catch (err) {
+          console.error('Cancel failed:', err);
+      } finally {
+          setCancelling(false);
+      }
+  };
+
   const handleSaveDetails = async () => {
       try {
           const updated = await updateProjectDetails(project.id, editForm);
@@ -182,6 +198,7 @@ const ProjectDetails = () => {
               name: updated.name,
               description: updated.description,
               max_builds: updated.max_builds,
+              max_build_minutes: updated.max_build_minutes,
               project_group_id: updated.project_group_id
           }));
           setIsEditing(false);
@@ -407,6 +424,18 @@ const ProjectDetails = () => {
               <Copy className="w-4 h-4" />
               {t('project.copyProject')}
             </button>
+            {project?.builds?.some(b => b.status === 'running') && (
+              <button
+                onClick={handleCancelBuild}
+                disabled={cancelling}
+                className="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {cancelling
+                  ? <><Loader2 className="w-4 h-4 animate-spin" />{t('project.cancelling')}</>
+                  : <><StopCircle className="w-4 h-4" />{t('project.cancelBuild')}</>
+                }
+              </button>
+            )}
             <button
               onClick={() => setShowBuildDialog(true)}
               disabled={building || project?.builds?.some(b => b.status === 'running' || b.status === 'pending')}
@@ -566,8 +595,8 @@ const ProjectDetails = () => {
                 <div>
                     <label className="text-sm text-text-muted">{t('project.retentionPolicy')}</label>
                     {isEditing ? (
-                      <input 
-                        type="number" 
+                      <input
+                        type="number"
                         min="1"
                         max="100"
                         value={editForm.max_builds}
@@ -576,6 +605,21 @@ const ProjectDetails = () => {
                       />
                     ) : (
                         <p className="text-text">{project.max_builds || 10} builds</p>
+                    )}
+                </div>
+                <div>
+                    <label className="text-sm text-text-muted">{t('project.maxBuildMinutes')}</label>
+                    {isEditing ? (
+                      <input
+                        type="number"
+                        min="1"
+                        max="480"
+                        value={editForm.max_build_minutes}
+                        onChange={(e) => setEditForm(prev => ({ ...prev, max_build_minutes: parseInt(e.target.value) || 15 }))}
+                        className="w-full mt-1 bg-background border border-border rounded px-3 py-1.5 text-text focus:outline-none focus:border-primary"
+                      />
+                    ) : (
+                        <p className="text-text">{project.max_build_minutes || 15} min</p>
                     )}
                 </div>
               </div>

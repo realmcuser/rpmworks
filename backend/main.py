@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime, timezone
 import asyncio
+import threading
 import time
 import os
 import ssl
@@ -42,6 +43,7 @@ with engine.connect() as _conn:
     _conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_source VARCHAR NOT NULL DEFAULT 'local'"))
     _conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS cron_schedule VARCHAR"))
     _conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS cron_last_run TIMESTAMPTZ"))
+    _conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS max_build_minutes INTEGER NOT NULL DEFAULT 15"))
     _conn.commit()
 
 def _ldap_authenticate(username: str, password: str, cfg: models.LdapSettings) -> Optional[dict]:
@@ -125,6 +127,9 @@ def _ldap_test_connection(server_url: str, bind_dn: Optional[str], bind_password
 
 
 app = FastAPI(title="RPM Works API")
+
+# Maps build_id → threading.Event; set the event to cancel that build
+_cancel_events: dict = {}
 
 @app.on_event("startup")
 async def startup_event():
@@ -261,11 +266,13 @@ class ProjectBase(BaseModel):
     name: str
     description: Optional[str] = None
     max_builds: int = 10
+    max_build_minutes: int = 15
 
 class ProjectUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     max_builds: Optional[int] = None
+    max_build_minutes: Optional[int] = None
     notes: Optional[str] = None
     project_group_id: Optional[int] = None
     cron_schedule: Optional[str] = None
@@ -283,6 +290,7 @@ class Project(ProjectBase):
     last_build: Optional[str] = None
     created_at: Optional[datetime] = None
     max_builds: int = 10
+    max_build_minutes: int = 15
     notes: Optional[str] = None
     user_id: Optional[int] = None
     project_group_id: Optional[int] = None
@@ -907,6 +915,8 @@ def _run_sequential_builds(build_ids: list, project_id: int, build_number: int, 
     skip_remaining = False
     any_failed = False
     for bid in build_ids:
+        cancel_evt = threading.Event()
+        _cancel_events[bid] = cancel_evt
         db_inner = SessionLocal()
         try:
             build = db_inner.query(models.Build).filter(models.Build.id == bid).first()
@@ -921,8 +931,11 @@ def _run_sequential_builds(build_ids: list, project_id: int, build_number: int, 
             build.status = "running"
             db_inner.commit()
 
+            project_obj = db_inner.query(models.Project).filter(models.Project.id == project_id).first()
+            max_minutes = project_obj.max_build_minutes if project_obj and project_obj.max_build_minutes else 15
+
             builder = RPMWorks()
-            builder.start_build(bid, project_id, SessionLocal)
+            builder.start_build(bid, project_id, SessionLocal, cancel_event=cancel_evt, max_build_minutes=max_minutes)
 
             db_inner.refresh(build)
 
@@ -936,6 +949,7 @@ def _run_sequential_builds(build_ids: list, project_id: int, build_number: int, 
             print(f"Build {bid} error: {e}")
             any_failed = True
         finally:
+            _cancel_events.pop(bid, None)
             db_inner.close()
 
     db_final = SessionLocal()
@@ -951,7 +965,7 @@ def _run_sequential_builds(build_ids: list, project_id: int, build_number: int, 
                 proj.status = previous_status  # restore pre-build status — nothing happened
             elif all(s in ("success", "skipped") for s in statuses):
                 proj.status = "success"
-            elif any(s == "failed" for s in statuses):
+            elif any(s in ("failed", "cancelled") for s in statuses):
                 proj.status = "failed"
             else:
                 proj.status = "success"
@@ -1329,6 +1343,31 @@ async def delete_build(build_id: int, db: Session = Depends(get_db), current_use
     db.commit()
     return None
 
+@app.post("/api/builds/{build_id}/cancel", status_code=status.HTTP_204_NO_CONTENT)
+async def cancel_build(build_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    build = db.query(models.Build).filter(models.Build.id == build_id).first()
+    if not build:
+        raise HTTPException(status_code=404, detail="Build not found")
+    if not check_project_access(build.project, current_user):
+        raise HTTPException(status_code=403, detail="Access denied")
+    if build.status != "running":
+        raise HTTPException(status_code=400, detail="Build is not running")
+
+    cancel_evt = _cancel_events.get(build_id)
+    if cancel_evt:
+        cancel_evt.set()
+    else:
+        # No active thread (e.g. server was restarted) — mark directly
+        build.status = "cancelled"
+        if build.build_log:
+            build.build_log += "\n[Cancelled by user]"
+        else:
+            build.build_log = "[Cancelled by user]"
+        if build.project:
+            build.project.status = "failed"
+        db.commit()
+    return None
+
 @app.put("/api/projects/{project_id}", response_model=Project)
 async def update_project(project_id: int, project_update: ProjectUpdate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     project = db.query(models.Project).filter(models.Project.id == project_id).first()
@@ -1351,6 +1390,9 @@ async def update_project(project_id: int, project_update: ProjectUpdate, db: Ses
         
     if project_update.max_builds is not None:
         project.max_builds = project_update.max_builds
+
+    if project_update.max_build_minutes is not None:
+        project.max_build_minutes = max(1, project_update.max_build_minutes)
 
     if project_update.notes is not None:
         project.notes = project_update.notes
@@ -1400,6 +1442,7 @@ async def clone_project(project_id: int, req: ProjectCloneRequest, db: Session =
         description=source_project.description,
         status="pending",
         max_builds=source_project.max_builds,
+        max_build_minutes=source_project.max_build_minutes,
         notes=source_project.notes,
         user_id=current_user.id
     )
@@ -1559,6 +1602,7 @@ async def get_project(project_id: int, db: Session = Depends(get_db), current_us
         last_build=project.last_build,
         created_at=project.created_at,
         max_builds=project.max_builds,
+        max_build_minutes=project.max_build_minutes if project.max_build_minutes is not None else 15,
         notes=project.notes,
         user_id=project.user_id,
         cron_schedule=project.cron_schedule,
