@@ -2,6 +2,7 @@ import paramiko
 import stat
 from typing import List, Dict, Optional
 import os
+import time
 
 class SSHService:
     def __init__(self):
@@ -164,13 +165,58 @@ class SSHService:
             cmd_to_run = f"cd {cwd} && {command}"
 
         stdin, stdout, stderr = self.client.exec_command(cmd_to_run)
-        
+
         # Read output
         out_str = stdout.read().decode('utf-8').strip()
         err_str = stderr.read().decode('utf-8').strip()
         exit_code = stdout.channel.recv_exit_status()
-        
+
         return exit_code, out_str, err_str
+
+    def execute_command_streaming(self, command: str, cwd: Optional[str] = None, on_chunk=None) -> tuple[int, str]:
+        """Execute a command and call on_chunk(text) for each chunk of output as it arrives.
+        Merges stdout and stderr into a single stream (terminal-like).
+        Returns (exit_code, full_output).
+        """
+        if not self.client.get_transport() or not self.client.get_transport().is_active():
+            raise Exception("Not connected")
+
+        cmd_to_run = f"cd {cwd} && {command}" if cwd else command
+        channel = self.client.get_transport().open_session()
+        channel.set_combine_stderr(True)
+        channel.exec_command(cmd_to_run)
+        channel.setblocking(False)
+
+        buf = []
+        while not channel.exit_status_ready():
+            try:
+                chunk = channel.recv(4096)
+                if chunk:
+                    text = chunk.decode('utf-8', errors='replace')
+                    buf.append(text)
+                    if on_chunk:
+                        on_chunk(text)
+                else:
+                    time.sleep(0.2)
+            except Exception:
+                time.sleep(0.2)
+
+        # Drain any remaining output
+        while True:
+            try:
+                chunk = channel.recv(4096)
+                if not chunk:
+                    break
+                text = chunk.decode('utf-8', errors='replace')
+                buf.append(text)
+                if on_chunk:
+                    on_chunk(text)
+            except Exception:
+                break
+
+        exit_code = channel.recv_exit_status()
+        channel.close()
+        return exit_code, ''.join(buf).strip()
 
     def close(self):
         self.client.close()

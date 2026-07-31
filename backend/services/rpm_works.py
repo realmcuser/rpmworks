@@ -288,26 +288,61 @@ rm -rf %{{buildroot}}
                 if elapsed > max_build_minutes * 60:
                     raise BuildCancelled(f"Build timed out after {max_build_minutes} minutes{(' during ' + phase) if phase else ''}")
 
-            def ssh_exec_with_cancel(ssh_client, command, cwd, phase=""):
-                """Run ssh.execute_command in a thread; poll cancel_event and timeout."""
+            def ssh_exec_with_cancel(ssh_client, command, cwd, phase="", stream_log=False):
+                """Run an SSH command in a daemon thread; poll cancel/timeout every 5 s.
+                When stream_log=True, output is flushed to the build log in real time
+                (useful for long-running scripts like pre-fetch). Returns (code, out, err).
+                """
                 holder = {}
                 done_evt = threading.Event()
+                pending = []
+                pending_lock = threading.Lock()
 
-                def _run():
-                    try:
-                        code, out, err = ssh_client.execute_command(command, cwd=cwd)
-                        holder['code'] = code
-                        holder['out'] = out
-                        holder['err'] = err
-                    except Exception as exc:
-                        holder['error'] = str(exc)
-                    finally:
-                        done_evt.set()
+                if stream_log:
+                    def _on_chunk(text):
+                        with pending_lock:
+                            pending.append(text)
+
+                    def _run():
+                        try:
+                            code, out = ssh_client.execute_command_streaming(command, cwd=cwd, on_chunk=_on_chunk)
+                            holder['code'] = code
+                            holder['out'] = out
+                            holder['err'] = ''
+                        except Exception as exc:
+                            holder['error'] = str(exc)
+                        finally:
+                            done_evt.set()
+                else:
+                    def _run():
+                        try:
+                            code, out, err = ssh_client.execute_command(command, cwd=cwd)
+                            holder['code'] = code
+                            holder['out'] = out
+                            holder['err'] = err
+                        except Exception as exc:
+                            holder['error'] = str(exc)
+                        finally:
+                            done_evt.set()
 
                 t = threading.Thread(target=_run, daemon=True)
                 t.start()
                 while not done_evt.wait(timeout=5):
+                    if stream_log:
+                        with pending_lock:
+                            batch = pending[:]
+                            pending.clear()
+                        if batch:
+                            log_msg(''.join(batch).rstrip())
                     check_cancel(phase)
+
+                # Final flush after command exits
+                if stream_log:
+                    with pending_lock:
+                        batch = pending[:]
+                    if batch:
+                        log_msg(''.join(batch).rstrip())
+
                 if 'error' in holder:
                     raise Exception(holder['error'])
                 return holder['code'], holder['out'], holder['err']
@@ -338,12 +373,9 @@ rm -rf %{{buildroot}}
                 if project.source_config.pre_fetch_script:
                     log_msg(f"Running pre-fetch script...")
                     cwd = project.source_config.path
-                    code, out, err = ssh_exec_with_cancel(ssh, project.source_config.pre_fetch_script, cwd=cwd, phase="pre-fetch script")
-
-                    if out:
-                        log_msg(f"Pre-fetch output:\n{out}")
-                    if err:
-                        log_msg(f"Pre-fetch stderr:\n{err}")
+                    # stream_log=True: output flows to the build log in real time so we can
+                    # see where the script gets stuck if it hangs.
+                    code, out, err = ssh_exec_with_cancel(ssh, project.source_config.pre_fetch_script, cwd=cwd, phase="pre-fetch script", stream_log=True)
 
                     if code == 42:
                         log_msg("Pre-fetch script returned exit code 42 — nothing to do, skipping build.")
