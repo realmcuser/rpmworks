@@ -1,6 +1,6 @@
 Name:           rpmworks
 Version:        1.0.0
-Release:        94%{?dist}
+Release:        95%{?dist}
 Summary:        RPM Build Management System
 License:        Proprietary
 BuildArch:      x86_64

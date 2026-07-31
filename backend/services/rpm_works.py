@@ -561,14 +561,31 @@ rm -rf %{{buildroot}}
                         log_msg(f"Skapar cachad byggmiljö: {cache_image} (görs bara en gång per deps-kombination)")
                         tmp_name = f"rpmworks-tmp-{int(time.time())}"
                         install_cmd = f"dnf install -y {' '.join(deps)} && dnf clean all"
-                        r = subprocess.run(
+                        _cache_proc = subprocess.Popen(
                             ["podman", "--root", storage_root, "--runroot", run_root,
                              "run", "--name", tmp_name, "--network=host",
                              container_image, "/bin/bash", "-c", install_cmd],
-                            capture_output=True, text=True
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
                         )
-                        if r.returncode != 0:
-                            log_msg(f"VARNING: kunde inte skapa cache-image, faller tillbaka på bas-image\n{r.stderr}")
+                        _cache_out = _cache_err = ""
+                        while True:
+                            try:
+                                _cache_out, _cache_err = _cache_proc.communicate(timeout=5)
+                                break
+                            except subprocess.TimeoutExpired:
+                                try:
+                                    check_cancel("cache image setup")
+                                except BuildCancelled:
+                                    _cache_proc.kill()
+                                    _cache_proc.communicate()
+                                    subprocess.run(
+                                        ["podman", "--root", storage_root, "--runroot", run_root, "rm", "-f", tmp_name],
+                                        capture_output=True
+                                    )
+                                    raise
+                        r_returncode = _cache_proc.returncode
+                        if r_returncode != 0:
+                            log_msg(f"VARNING: kunde inte skapa cache-image, faller tillbaka på bas-image\n{_cache_err}")
                             subprocess.run(
                                 ["podman", "--root", storage_root, "--runroot", run_root, "rm", tmp_name],
                                 capture_output=True

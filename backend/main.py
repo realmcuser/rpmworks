@@ -943,6 +943,9 @@ def _run_sequential_builds(build_ids: list, project_id: int, build_number: int, 
                 skip_remaining = True
             elif build.status == "success":
                 auto_deploy_build(build, project_id, db_inner)
+            elif build.status == "cancelled":
+                skip_remaining = True
+                any_failed = True
             else:
                 any_failed = True
         except Exception as e:
@@ -1605,6 +1608,8 @@ async def get_project(project_id: int, db: Session = Depends(get_db), current_us
         max_build_minutes=project.max_build_minutes if project.max_build_minutes is not None else 15,
         notes=project.notes,
         user_id=project.user_id,
+        project_group_id=project.project_group_id,
+        group_order=project.group_order,
         cron_schedule=project.cron_schedule,
         source_config=project.source_config,
         build_config=build_config_data,
