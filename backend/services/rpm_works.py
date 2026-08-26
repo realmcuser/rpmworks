@@ -6,6 +6,7 @@ import re
 import hashlib
 import fcntl
 import threading
+import shlex
 from typing import List
 from models import Project, BuildConfig, Build, Distribution
 from services.ssh_service import SSHService
@@ -373,9 +374,17 @@ rm -rf %{{buildroot}}
                 if project.source_config.pre_fetch_script:
                     log_msg(f"Running pre-fetch script...")
                     cwd = project.source_config.path
+                    build_env = project.source_config.build_env or {}
+                    env_prefix = "".join(
+                        f"export {k}={shlex.quote(str(v))}\n"
+                        for k, v in build_env.items()
+                    )
+                    if build_env:
+                        log_msg(f"Injecting build_env: {list(build_env.keys())}")
+                    prefetch_cmd = env_prefix + project.source_config.pre_fetch_script
                     # stream_log=True: output flows to the build log in real time so we can
                     # see where the script gets stuck if it hangs.
-                    code, out, err = ssh_exec_with_cancel(ssh, project.source_config.pre_fetch_script, cwd=cwd, phase="pre-fetch script", stream_log=True)
+                    code, out, err = ssh_exec_with_cancel(ssh, prefetch_cmd, cwd=cwd, phase="pre-fetch script", stream_log=True)
 
                     if code == 42:
                         log_msg("Pre-fetch script returned exit code 42 — nothing to do, skipping build.")
@@ -682,7 +691,14 @@ rm -rf %{{buildroot}}
                             log_msg(f"WARNING: Could not connect for post-build script: {msg_post}")
                         else:
                             rpm_files_str = " ".join([os.path.basename(f) for f in rpm_files])
+                            _post_build_env = project.source_config.build_env or {}
+                            _build_env_exports = "".join(
+                                f"export {k}={shlex.quote(str(v))}\n"
+                                for k, v in _post_build_env.items()
+                            )
+                            # build_env first, then RPMWORKS_* so they cannot be overridden
                             env_prefix = (
+                                _build_env_exports +
                                 f"export RPMWORKS_BUILD_NUMBER='{new_build.build_number}'\n"
                                 f"export RPMWORKS_BUILD_EVR='{build_evr}'\n"
                                 f"export RPMWORKS_PROJECT_NAME='{project.name}'\n"

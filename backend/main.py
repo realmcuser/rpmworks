@@ -9,6 +9,7 @@ import asyncio
 import threading
 import time
 import os
+import re
 import ssl
 try:
     from croniter import croniter as CronIter
@@ -44,6 +45,7 @@ with engine.connect() as _conn:
     _conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS cron_schedule VARCHAR"))
     _conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS cron_last_run TIMESTAMPTZ"))
     _conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS max_build_minutes INTEGER NOT NULL DEFAULT 15"))
+    _conn.execute(text("ALTER TABLE source_configs ADD COLUMN IF NOT EXISTS build_env JSON"))
     _conn.commit()
 
 def _ldap_authenticate(username: str, password: str, cfg: models.LdapSettings) -> Optional[dict]:
@@ -335,6 +337,7 @@ class SourceConfig(BaseModel):
     pre_fetch_script: Optional[str] = None
     post_build_script: Optional[str] = None
     remote_command: Optional[str] = None
+    build_env: dict = {}
 
     class Config:
         from_attributes = True
@@ -365,6 +368,17 @@ class ConnectionRequest(BaseModel):
     path: Optional[str] = "."
     ssh_key: Optional[str] = None
 
+_BUILD_ENV_KEY_RE = re.compile(r'^[A-Z][A-Z0-9_]*$')
+
+def _validate_build_env(env: dict):
+    for k, v in env.items():
+        if v is None:
+            continue  # null = delete key, no validation needed
+        if not _BUILD_ENV_KEY_RE.match(k):
+            raise HTTPException(status_code=422, detail=f"build_env key '{k}' is invalid — must match [A-Z][A-Z0-9_]* (uppercase letters, digits, underscores; must start with a letter)")
+        if k.startswith('RPMWORKS_'):
+            raise HTTPException(status_code=422, detail=f"build_env key '{k}' is reserved — keys may not start with RPMWORKS_")
+
 class SourceConfigUpdate(BaseModel):
     # Connection settings (editable)
     host: Optional[str] = None
@@ -378,6 +392,9 @@ class SourceConfigUpdate(BaseModel):
     pre_fetch_script: Optional[str] = None
     post_build_script: Optional[str] = None
     remote_command: Optional[str] = None
+    # Project-level env vars — omit to leave unchanged; {} to clear all;
+    # {"KEY": null} to delete a single key; {"KEY": "value"} to set/update
+    build_env: Optional[dict] = None
 
 class BrowseRequest(BaseModel):
     path: str
@@ -1653,6 +1670,19 @@ async def update_source_config(project_id: int, config: SourceConfigUpdate, db: 
         db_source.post_build_script = config.post_build_script
     if config.remote_command is not None:
         db_source.remote_command = config.remote_command
+
+    if config.build_env is not None:
+        _validate_build_env(config.build_env)
+        if config.build_env == {}:
+            db_source.build_env = {}
+        else:
+            current = dict(db_source.build_env or {})
+            for k, v in config.build_env.items():
+                if v is None:
+                    current.pop(k, None)
+                else:
+                    current[k] = v
+            db_source.build_env = current
 
     db.commit()
     db.refresh(db_source)
