@@ -1,10 +1,10 @@
 import React, { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Plus, GitBranch, Clock, ArrowRight, Loader2, LayoutGrid, List, Play } from 'lucide-react';
 import { fetchProjects, fetchProjectGroups, startBuild, startGroupBuild } from '../services/api';
 
-const ProjectCard = ({ name, description, lastBuild, status, onClick, onBuildNow, isBuilding, t }) => {
+const ProjectCard = ({ name, description, lastBuild, status, logTail, projectId, onClick, onBuildNow, isBuilding, t }) => {
   const buildDisabled = isBuilding || status === 'running' || status === 'pending';
   return (
   <div onClick={onClick} className="bg-surface border border-border rounded-xl p-5 hover:border-primary/50 transition-colors group cursor-pointer shadow-lg shadow-black/20 relative">
@@ -27,7 +27,20 @@ const ProjectCard = ({ name, description, lastBuild, status, onClick, onBuildNow
     </div>
 
     <h3 className="text-lg font-semibold mb-2 group-hover:text-primary transition-colors">{name}</h3>
-    <p className="text-text-muted text-sm mb-4 line-clamp-2">{description || t('dashboard.noDescription')}</p>
+    <p className="text-text-muted text-sm mb-3 line-clamp-2">{description || t('dashboard.noDescription')}</p>
+
+    {status === 'failed' && logTail && (
+      <div className="mb-3" onClick={e => e.stopPropagation()}>
+        <pre className="text-xs font-mono bg-red-500/5 border border-red-500/20 rounded-lg p-2 text-red-400/80 overflow-hidden whitespace-pre-wrap break-all line-clamp-3">{logTail}</pre>
+        <Link
+          to={`/projects/${projectId}`}
+          onClick={e => e.stopPropagation()}
+          className="text-xs text-primary/70 hover:text-primary mt-1 inline-block"
+        >
+          {t('dashboard.viewFullLog')} →
+        </Link>
+      </div>
+    )}
 
     <button
       onClick={onBuildNow}
@@ -51,7 +64,7 @@ const ProjectCard = ({ name, description, lastBuild, status, onClick, onBuildNow
   );
 };
 
-const ProjectListItem = ({ name, description, lastBuild, status, onClick, onBuildNow, isBuilding, t }) => {
+const ProjectListItem = ({ name, description, lastBuild, status, logTail, projectId, onClick, onBuildNow, isBuilding, t }) => {
   const buildDisabled = isBuilding || status === 'running' || status === 'pending';
   return (
   <div onClick={onClick} className="bg-surface border border-border rounded-xl px-5 py-3 hover:border-primary/50 transition-colors group cursor-pointer shadow-lg shadow-black/20 relative">
@@ -93,6 +106,18 @@ const ProjectListItem = ({ name, description, lastBuild, status, onClick, onBuil
             <span>{lastBuild || t('dashboard.neverBuilt')}</span>
           </div>
         </div>
+        {status === 'failed' && logTail && (
+          <div className="mt-2" onClick={e => e.stopPropagation()}>
+            <pre className="text-xs font-mono bg-red-500/5 border border-red-500/20 rounded-lg px-2.5 py-1.5 text-red-400/80 overflow-hidden whitespace-pre-wrap break-all line-clamp-2">{logTail}</pre>
+            <Link
+              to={`/projects/${projectId}`}
+              onClick={e => e.stopPropagation()}
+              className="text-xs text-primary/70 hover:text-primary mt-0.5 inline-block"
+            >
+              {t('dashboard.viewFullLog')} →
+            </Link>
+          </div>
+        )}
       </div>
     </div>
   </div>
@@ -253,6 +278,8 @@ const Dashboard = () => {
             description={project.description}
             status={project.status}
             lastBuild={project.last_build}
+            logTail={project.log_tail}
+            projectId={project.id}
             onClick={() => navigate(`/projects/${project.id}`)}
             onBuildNow={(e) => handleBuildNow(e, project.id)}
             isBuilding={buildingIds.has(project.id)}

@@ -18,7 +18,8 @@
     "gridView": "Rutnätsvy",
     "listView": "Listvy",
     "buildGroup": "Bygg alla",
-    "buildGroupTitle": "Bygg alla projekt i denna grupp"
+    "buildGroupTitle": "Bygg alla projekt i denna grupp",
+    "viewFullLog": "Se hela loggen"
   },
   "sidebar": {
     "projects": "Projekt",

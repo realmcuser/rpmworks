@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException, Depends, status, BackgroundTasks
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from typing import List, Optional
 from datetime import datetime, timezone
 import asyncio
@@ -46,6 +46,7 @@ with engine.connect() as _conn:
     _conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS cron_last_run TIMESTAMPTZ"))
     _conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS max_build_minutes INTEGER NOT NULL DEFAULT 15"))
     _conn.execute(text("ALTER TABLE source_configs ADD COLUMN IF NOT EXISTS build_env JSON"))
+    _conn.execute(text("UPDATE source_configs SET build_env = '{}' WHERE build_env IS NULL"))
     _conn.commit()
 
 def _ldap_authenticate(username: str, password: str, cfg: models.LdapSettings) -> Optional[dict]:
@@ -298,6 +299,7 @@ class Project(ProjectBase):
     project_group_id: Optional[int] = None
     group_order: int = 0
     cron_schedule: Optional[str] = None
+    log_tail: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -338,6 +340,11 @@ class SourceConfig(BaseModel):
     post_build_script: Optional[str] = None
     remote_command: Optional[str] = None
     build_env: dict = {}
+
+    @field_validator('build_env', mode='before')
+    @classmethod
+    def coerce_none_to_empty(cls, v):
+        return v if v is not None else {}
 
     class Config:
         from_attributes = True
@@ -1276,9 +1283,35 @@ async def create_user(user: UserCreate, db: Session = Depends(get_db)):
 async def read_users_me(current_user: models.User = Depends(get_current_user)):
     return current_user
 
+def _log_tail(log: Optional[str], n: int = 3) -> Optional[str]:
+    if not log:
+        return None
+    lines = [l for l in log.splitlines() if l.strip()]
+    return "\n".join(lines[-n:]) if lines else None
+
 @app.get("/api/projects", response_model=List[Project])
 async def get_projects(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    return db.query(models.Project).order_by(models.Project.group_order.asc(), models.Project.id.asc()).all()
+    projects = db.query(models.Project).order_by(models.Project.group_order.asc(), models.Project.id.asc()).all()
+
+    failed_ids = [p.id for p in projects if p.status == 'failed']
+    build_map: dict = {}
+    if failed_ids:
+        subq = (
+            db.query(models.Build.project_id, func.max(models.Build.id).label('max_id'))
+            .filter(models.Build.project_id.in_(failed_ids), models.Build.status == 'failed')
+            .group_by(models.Build.project_id)
+            .subquery()
+        )
+        for b in db.query(models.Build).join(subq, models.Build.id == subq.c.max_id).all():
+            build_map[b.project_id] = b
+
+    result = []
+    for p in projects:
+        proj = Project.model_validate(p)
+        if p.id in build_map:
+            proj.log_tail = _log_tail(build_map[p.id].build_log)
+        result.append(proj)
+    return result
 
 @app.post("/api/projects", response_model=Project)
 async def create_project(project_in: ProjectCreate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
@@ -1854,13 +1887,29 @@ async def run_prefetch_script(project_id: int, db: Session = Depends(get_db), cu
     if not db_source or not db_source.pre_fetch_script:
         raise HTTPException(status_code=400, detail="No pre-fetch script configured")
 
+    import shlex as _shlex
+    build_env = db_source.build_env or {}
+    env_prefix = "".join(
+        f"export {k}={_shlex.quote(str(v))}\n"
+        for k, v in build_env.items()
+    )
+    script = env_prefix + db_source.pre_fetch_script
+
     ssh = SSHService()
     try:
         success, message = ssh.connect(db_source.host, db_source.username, db_source.password, db_source.ssh_key_path)
         if not success:
             raise HTTPException(status_code=400, detail=f"Connection failed: {message}")
 
-        code, out, err = ssh.execute_command(db_source.pre_fetch_script, cwd=db_source.path)
+        timeout_s = (project.max_build_minutes or 15) * 60
+        try:
+            code, out, err = await asyncio.wait_for(
+                asyncio.to_thread(ssh.execute_command, script, cwd=db_source.path),
+                timeout=timeout_s,
+            )
+        except asyncio.TimeoutError:
+            raise HTTPException(status_code=504, detail=f"Pre-fetch script timed out after {timeout_s}s")
+
         return {
             "exit_code": code,
             "stdout": out,
