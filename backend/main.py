@@ -300,6 +300,7 @@ class Project(ProjectBase):
     group_order: int = 0
     cron_schedule: Optional[str] = None
     log_tail: Optional[str] = None
+    last_build_id: Optional[int] = None
 
     class Config:
         from_attributes = True
@@ -1310,6 +1311,7 @@ async def get_projects(db: Session = Depends(get_db), current_user: models.User 
         proj = Project.model_validate(p)
         if p.id in build_map:
             proj.log_tail = _log_tail(build_map[p.id].build_log)
+            proj.last_build_id = build_map[p.id].id
         result.append(proj)
     return result
 

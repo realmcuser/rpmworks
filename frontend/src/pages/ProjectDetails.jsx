@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useParams, Link, useNavigate } from 'react-router-dom';
+import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { ArrowLeft, Server, Box, Activity, Settings, Terminal, Play, Save, Download, ChevronDown, ChevronUp, Edit2, X, Check, Trash2, Copy, AlertTriangle, Key, FileText, Loader2, StopCircle } from 'lucide-react';
 import { fetchWithAuth, startBuild, updateProjectDetails, deleteBuild, deleteProject, updateSourceConfig, cloneProject, runPrefetchScript, fetchProjectGroups, cancelBuild } from '../services/api';
@@ -32,14 +32,17 @@ const AutoScrollLog = ({ log }) => {
 const ProjectDetails = () => {
   const { id } = useParams();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { t } = useTranslation();
   const [project, setProject] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [activeTab, setActiveTab] = useState('overview');
+  const openBuildId = searchParams.get('build') ? parseInt(searchParams.get('build'), 10) : null;
+  const [activeTab, setActiveTab] = useState(openBuildId ? 'builds' : 'overview');
   const [isSourceModalOpen, setIsSourceModalOpen] = useState(false);
   const [building, setBuilding] = useState(false);
-  const [expandedBuildId, setExpandedBuildId] = useState(null);
+  const [expandedBuildId, setExpandedBuildId] = useState(openBuildId);
+  const linkedBuildRef = useRef(null);
   
   // Edit state for overview
   const [isEditing, setIsEditing] = useState(false);
@@ -95,6 +98,13 @@ const ProjectDetails = () => {
     loadProject();
     fetchProjectGroups().then(setProjectGroups).catch(console.error);
   }, [id]);
+
+  // Scroll to linked build once project data is loaded
+  useEffect(() => {
+    if (openBuildId && project && linkedBuildRef.current) {
+      linkedBuildRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, [project, openBuildId]);
 
   // Polling for running builds
   useEffect(() => {
@@ -990,7 +1000,7 @@ const ProjectDetails = () => {
                  {Array.from(new Map(project.builds.map(b => [b.id, b])).values())
                     .sort((a, b) => b.id - a.id) // Sort by ID descending (newest first)
                     .map((build) => (
-                   <div key={build.id} className="flex flex-col hover:bg-surface-hover transition-colors">
+                   <div key={build.id} ref={build.id === openBuildId ? linkedBuildRef : null} className="flex flex-col hover:bg-surface-hover transition-colors">
                      <div 
                         className="p-4 flex items-center justify-between cursor-pointer"
                         onClick={() => toggleBuildLog(build.id)}
