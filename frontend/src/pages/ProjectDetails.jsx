@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { ArrowLeft, Server, Box, Activity, Settings, Terminal, Play, Save, Download, ChevronDown, ChevronUp, Edit2, X, Check, Trash2, Copy, AlertTriangle, Key, FileText, Loader2, StopCircle } from 'lucide-react';
-import { fetchWithAuth, startBuild, updateProjectDetails, deleteBuild, deleteProject, updateSourceConfig, cloneProject, runPrefetchScript, fetchProjectGroups, cancelBuild } from '../services/api';
+import { fetchWithAuth, startBuild, updateProjectDetails, updateProjectGroups, deleteBuild, deleteProject, updateSourceConfig, cloneProject, runPrefetchScript, fetchProjectGroups, cancelBuild } from '../services/api';
 import SourceBrowserModal from '../components/SourceManager/SourceBrowserModal';
 import SpecEditor from '../components/BuildManager/SpecEditor';
 import FileMapper from '../components/BuildManager/FileMapper';
@@ -46,7 +46,7 @@ const ProjectDetails = () => {
   
   // Edit state for overview
   const [isEditing, setIsEditing] = useState(false);
-  const [editForm, setEditForm] = useState({ name: '', description: '', max_builds: 10, max_build_minutes: 15, project_group_id: null });
+  const [editForm, setEditForm] = useState({ name: '', description: '', max_builds: 10, max_build_minutes: 15, group_ids: [] });
   const [cancelling, setCancelling] = useState(false);
   const [projectGroups, setProjectGroups] = useState([]);
 
@@ -133,7 +133,7 @@ const ProjectDetails = () => {
             description: project.description || '',
             max_builds: project.max_builds || 10,
             max_build_minutes: project.max_build_minutes || 15,
-            project_group_id: project.project_group_id || null
+            group_ids: project.group_ids || []
         });
         setNotesText(project.notes || '');
         setCronInput(project.cron_schedule || '');
@@ -202,14 +202,19 @@ const ProjectDetails = () => {
 
   const handleSaveDetails = async () => {
       try {
-          const updated = await updateProjectDetails(project.id, editForm);
+          const { group_ids, ...detailFields } = editForm;
+          const [updated, groupsUpdated] = await Promise.all([
+              updateProjectDetails(project.id, detailFields),
+              updateProjectGroups(project.id, group_ids),
+          ]);
           setProject(prev => ({
               ...prev,
               name: updated.name,
               description: updated.description,
               max_builds: updated.max_builds,
               max_build_minutes: updated.max_build_minutes,
-              project_group_id: updated.project_group_id
+              group_ids: group_ids,
+              project_group_id: groupsUpdated.project_group_id,
           }));
           setIsEditing(false);
       } catch (err) {
@@ -580,19 +585,34 @@ const ProjectDetails = () => {
                 <div>
                   <label className="text-sm text-text-muted">{t('project.group')}</label>
                   {isEditing ? (
-                      <select
-                        value={editForm.project_group_id ?? ''}
-                        onChange={(e) => setEditForm(prev => ({ ...prev, project_group_id: e.target.value ? parseInt(e.target.value) : null }))}
-                        className="w-full mt-1 bg-background border border-border rounded px-3 py-1.5 text-text focus:outline-none focus:border-primary"
-                      >
-                        <option value="">{t('project.noGroup')}</option>
-                        {projectGroups.map(group => (
-                          <option key={group.id} value={group.id}>{group.name}</option>
-                        ))}
-                      </select>
+                    <div className="mt-1 flex flex-col gap-1">
+                      {projectGroups.length === 0 && (
+                        <p className="text-xs text-text-muted">{t('project.noGroups')}</p>
+                      )}
+                      {projectGroups.map(group => (
+                        <label key={group.id} className="flex items-center gap-2 cursor-pointer text-sm text-text hover:text-primary">
+                          <input
+                            type="checkbox"
+                            checked={editForm.group_ids.includes(group.id)}
+                            onChange={(e) => {
+                              setEditForm(prev => ({
+                                ...prev,
+                                group_ids: e.target.checked
+                                  ? [...prev.group_ids, group.id]
+                                  : prev.group_ids.filter(id => id !== group.id)
+                              }));
+                            }}
+                            className="accent-primary"
+                          />
+                          {group.name}
+                        </label>
+                      ))}
+                    </div>
                   ) : (
                     <p className="text-text">
-                      {projectGroups.find(g => g.id === project.project_group_id)?.name || t('project.noGroup')}
+                      {project.group_ids && project.group_ids.length > 0
+                        ? project.group_ids.map(gid => projectGroups.find(g => g.id === gid)?.name).filter(Boolean).join(', ')
+                        : t('project.noGroup')}
                     </p>
                   )}
                 </div>

@@ -134,6 +134,7 @@
     "description": "Description",
     "group": "Group",
     "noGroup": "— No group —",
+    "noGroups": "No groups created yet",
     "createdAt": "Created At",
     "retentionPolicy": "Retention Policy (Max Builds)",
     "maxBuildMinutes": "Max Build Time (minutes)",

@@ -134,6 +134,7 @@
     "description": "Beskrivning",
     "group": "Grupp",
     "noGroup": "— Ingen grupp —",
+    "noGroups": "Inga grupper skapade ännu",
     "createdAt": "Skapat",
     "retentionPolicy": "Bevarandepolicy (Max antal byggen)",
     "maxBuildMinutes": "Max byggtid (minuter)",

@@ -255,6 +255,18 @@ export async function deleteDistribution(id) {
   return true;
 }
 
+export async function updateProjectGroups(projectId, groupIds) {
+  const response = await fetchWithAuth(`/api/projects/${projectId}/groups`, {
+    method: 'PUT',
+    body: JSON.stringify({ group_ids: groupIds }),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || 'Failed to update project groups');
+  }
+  return response.json();
+}
+
 export async function fetchProjectGroups() {
   const response = await fetchWithAuth('/api/project-groups');
   if (!response.ok) {

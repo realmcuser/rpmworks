@@ -325,13 +325,13 @@ const Dashboard = () => {
           );
         }
 
-        const ungrouped = projects.filter(p => !p.project_group_id);
+        const ungrouped = projects.filter(p => !p.group_ids || p.group_ids.length === 0);
         const sections = [
           ...groups.map(group => ({
             key: `group-${group.id}`,
             title: group.name,
             groupId: group.id,
-            items: projects.filter(p => p.project_group_id === group.id)
+            items: projects.filter(p => p.group_ids && p.group_ids.includes(group.id))
           })),
           { key: 'ungrouped', title: t('dashboard.ungrouped'), items: ungrouped }
         ].filter(section => section.items.length > 0 || section.key === 'ungrouped');

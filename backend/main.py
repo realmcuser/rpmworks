@@ -47,6 +47,21 @@ with engine.connect() as _conn:
     _conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS max_build_minutes INTEGER NOT NULL DEFAULT 15"))
     _conn.execute(text("ALTER TABLE source_configs ADD COLUMN IF NOT EXISTS build_env JSON"))
     _conn.execute(text("UPDATE source_configs SET build_env = '{}' WHERE build_env IS NULL"))
+    _conn.execute(text("""
+        CREATE TABLE IF NOT EXISTS project_group_memberships (
+            project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+            group_id   INTEGER NOT NULL REFERENCES project_groups(id) ON DELETE CASCADE,
+            group_order INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (project_id, group_id)
+        )
+    """))
+    _conn.execute(text("""
+        INSERT INTO project_group_memberships (project_id, group_id, group_order)
+        SELECT id, project_group_id, group_order
+        FROM projects
+        WHERE project_group_id IS NOT NULL
+        ON CONFLICT DO NOTHING
+    """))
     _conn.commit()
 
 def _ldap_authenticate(username: str, password: str, cfg: models.LdapSettings) -> Optional[dict]:
@@ -301,6 +316,7 @@ class Project(ProjectBase):
     cron_schedule: Optional[str] = None
     log_tail: Optional[str] = None
     last_build_id: Optional[int] = None
+    group_ids: List[int] = []
 
     class Config:
         from_attributes = True
@@ -1161,9 +1177,14 @@ async def build_project_group(group_id: int, background_tasks: BackgroundTasks, 
     if not group:
         raise HTTPException(status_code=404, detail="Project group not found")
 
-    projects = db.query(models.Project).filter(
-        models.Project.project_group_id == group_id
-    ).order_by(models.Project.group_order.asc(), models.Project.id.asc()).all()
+    projects = (
+        db.query(models.Project)
+        .join(models.ProjectGroupMembership,
+              (models.ProjectGroupMembership.project_id == models.Project.id) &
+              (models.ProjectGroupMembership.group_id == group_id))
+        .order_by(models.ProjectGroupMembership.group_order.asc(), models.Project.id.asc())
+        .all()
+    )
 
     results = []
     for project in projects:
@@ -1177,6 +1198,40 @@ async def build_project_group(group_id: int, background_tasks: BackgroundTasks, 
         raise HTTPException(status_code=400, detail="No buildable projects found in this group")
 
     return {"message": "Builds started", "builds": results}
+
+
+class ProjectGroupsUpdate(BaseModel):
+    group_ids: List[int]
+
+@app.put("/api/projects/{project_id}/groups", response_model=Project)
+async def update_project_groups(project_id: int, body: ProjectGroupsUpdate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    project = db.query(models.Project).filter(models.Project.id == project_id).first()
+    if not project or not check_project_access(project, current_user):
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    # Validate all group ids exist
+    requested = set(body.group_ids)
+    if requested:
+        found = {g.id for g in db.query(models.ProjectGroup).filter(models.ProjectGroup.id.in_(requested)).all()}
+        missing = requested - found
+        if missing:
+            raise HTTPException(status_code=404, detail=f"Group(s) not found: {missing}")
+
+    # Replace memberships
+    db.query(models.ProjectGroupMembership).filter(
+        models.ProjectGroupMembership.project_id == project_id
+    ).delete()
+    for idx, gid in enumerate(body.group_ids):
+        db.add(models.ProjectGroupMembership(project_id=project_id, group_id=gid, group_order=idx))
+
+    # Keep project_group_id in sync with first group (backwards compat)
+    project.project_group_id = body.group_ids[0] if body.group_ids else None
+    db.commit()
+    db.refresh(project)
+
+    proj = Project.model_validate(project)
+    proj.group_ids = body.group_ids
+    return proj
 
 
 @app.get("/api/builds/{build_id}/download/{filename}")
@@ -1306,12 +1361,19 @@ async def get_projects(db: Session = Depends(get_db), current_user: models.User 
         for b in db.query(models.Build).join(subq, models.Build.id == subq.c.max_id).all():
             build_map[b.project_id] = b
 
+    # Fetch all group memberships in one query
+    all_memberships = db.query(models.ProjectGroupMembership).all()
+    memberships_by_project: dict = {}
+    for m in all_memberships:
+        memberships_by_project.setdefault(m.project_id, []).append(m.group_id)
+
     result = []
     for p in projects:
         proj = Project.model_validate(p)
         if p.id in build_map:
             proj.log_tail = _log_tail(build_map[p.id].build_log)
             proj.last_build_id = build_map[p.id].id
+        proj.group_ids = memberships_by_project.get(p.id, [])
         result.append(proj)
     return result
 
@@ -1453,11 +1515,18 @@ async def update_project(project_id: int, project_update: ProjectUpdate, db: Ses
         project.notes = project_update.notes
 
     if "project_group_id" in project_update.model_fields_set:
-        if project_update.project_group_id is not None:
-            group = db.query(models.ProjectGroup).filter(models.ProjectGroup.id == project_update.project_group_id).first()
+        new_gid = project_update.project_group_id
+        if new_gid is not None:
+            group = db.query(models.ProjectGroup).filter(models.ProjectGroup.id == new_gid).first()
             if not group:
                 raise HTTPException(status_code=404, detail="Project group not found")
-        project.project_group_id = project_update.project_group_id
+        project.project_group_id = new_gid
+        # Sync junction table: replace all memberships with just this one group (or none)
+        db.query(models.ProjectGroupMembership).filter(
+            models.ProjectGroupMembership.project_id == project.id
+        ).delete()
+        if new_gid is not None:
+            db.add(models.ProjectGroupMembership(project_id=project.id, group_id=new_gid, group_order=0))
 
     if "cron_schedule" in project_update.model_fields_set:
         new_schedule = project_update.cron_schedule or None

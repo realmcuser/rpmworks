@@ -16,6 +16,13 @@ class ProjectGroup(Base):
     name = Column(String, unique=True, nullable=False)
     sort_order = Column(Integer, default=0, nullable=False)
 
+class ProjectGroupMembership(Base):
+    __tablename__ = "project_group_memberships"
+
+    project_id = Column(Integer, ForeignKey("projects.id", ondelete="CASCADE"), primary_key=True)
+    group_id = Column(Integer, ForeignKey("project_groups.id", ondelete="CASCADE"), primary_key=True)
+    group_order = Column(Integer, default=0, nullable=False)
+
 class Project(Base):
     __tablename__ = "projects"
 
@@ -41,6 +48,7 @@ class Project(Base):
     builds = relationship("Build", back_populates="project", cascade="all, delete-orphan")
     deployment_targets = relationship("DeploymentTarget", back_populates="project", cascade="all, delete-orphan")
     distributions = relationship("Distribution", secondary=project_distributions)
+    group_memberships = relationship("ProjectGroupMembership", cascade="all, delete-orphan", foreign_keys="ProjectGroupMembership.project_id")
 
 class SourceConfig(Base):
     __tablename__ = "source_configs"
