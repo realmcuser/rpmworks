@@ -49,6 +49,8 @@ manual.md
 # Feature proposals / internal planning notes
 "förslag-spec-api.md"
 förslag-*.md
+RPMWorks-utgavekanaler-behovsspec-*.md
+RPMWorks-utgavekanaler-svar-*.md
 
 # Internal status/design notes
 STATUS.md
