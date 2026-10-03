@@ -117,6 +117,21 @@ with engine.connect() as _conn:
     """))
     _conn.commit()
 
+# Backfill: build_evr used to be derived from build_config.version with a hardcoded
+# '1.0.0' fallback, so projects with Version only in the spec got a wrong EVR.
+# Re-derive it from the built RPM filenames (idempotent — only touches mismatches).
+from services.rpm_works import evr_from_rpm_files as _evr_from_rpm_files
+with SessionLocal() as _db:
+    for _b in _db.query(models.Build).filter(models.Build.status == "success", models.Build.rpm_files.isnot(None)).all():
+        _proj = _b.project
+        _expected = (_proj.build_config.rpm_name if _proj and _proj.build_config else None) or (_proj.name if _proj else None)
+        # Filenames only (no header read) to keep startup fast
+        _evr = _evr_from_rpm_files([os.path.basename(f) for f in (_b.rpm_files or [])], _expected)
+        if _evr and _evr != _b.build_evr:
+            print(f"[migration] build {_b.id}: build_evr {_b.build_evr!r} -> {_evr!r}", flush=True)
+            _b.build_evr = _evr
+    _db.commit()
+
 def _ldap_authenticate(username: str, password: str, cfg: models.LdapSettings) -> Optional[dict]:
     """Bind to LDAP and return {is_admin: bool} on success, None on failure."""
     try:

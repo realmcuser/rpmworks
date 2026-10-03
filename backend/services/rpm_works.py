@@ -17,6 +17,64 @@ class BuildCancelled(Exception):
 
 BUILD_ROOT = os.getenv("WORKSPACE_DIR", os.path.abspath("build-workspace"))
 
+
+def parse_rpm_filename(filename):
+    """Split '<name>-<version>-<release>.<arch>.rpm' into (name, version, release, arch).
+    Returns None if the filename doesn't follow rpmbuild's default naming."""
+    base = os.path.basename(filename)
+    if not base.endswith(".rpm"):
+        return None
+    parts = base[:-4].rsplit(".", 1)
+    if len(parts) != 2:
+        return None
+    nvr, arch = parts
+    nvr_parts = nvr.rsplit("-", 2)
+    if len(nvr_parts) != 3:
+        return None
+    name, version, release = nvr_parts
+    return name, version, release, arch
+
+
+def _pick_main_rpm(rpm_files, expected_name=None):
+    """Pick the main package among built RPMs: exact name match first, otherwise the
+    first file that isn't a debuginfo/debugsource subpackage."""
+    candidates = [f for f in rpm_files if parse_rpm_filename(f)]
+    if expected_name:
+        for f in candidates:
+            if parse_rpm_filename(f)[0] == expected_name:
+                return f
+    for f in candidates:
+        name = parse_rpm_filename(f)[0]
+        if not (name.endswith("-debuginfo") or name.endswith("-debugsource")):
+            return f
+    return candidates[0] if candidates else None
+
+
+def evr_from_rpm_files(rpm_files, expected_name=None):
+    """Return '<version>-<release>' of the main package among the built RPM files,
+    read from the RPM header (falls back to the filename). None if undeterminable."""
+    main_rpm = _pick_main_rpm(rpm_files or [], expected_name)
+    if not main_rpm:
+        return None
+    if os.path.exists(main_rpm):
+        try:
+            r = subprocess.run(
+                ["rpm", "-qp", "--nosignature", "--nodigest", "--qf", "%{VERSION}-%{RELEASE}", main_rpm],
+                capture_output=True, text=True, timeout=30
+            )
+            if r.returncode == 0 and r.stdout.strip():
+                return r.stdout.strip()
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    parsed = parse_rpm_filename(main_rpm)
+    return f"{parsed[1]}-{parsed[2]}"
+
+
+def _spec_field(spec_text, field):
+    """Read the value of a top-level spec tag (e.g. Version, Release), or None."""
+    m = re.search(rf"^{field}:\s*(\S.*?)\s*$", spec_text or "", flags=re.MULTILINE)
+    return m.group(1) if m else None
+
 class RPMWorks:
     def __init__(self):
         os.makedirs(BUILD_ROOT, exist_ok=True)
@@ -52,9 +110,10 @@ class RPMWorks:
         if build_config.use_raw_spec and build_config.spec_template:
             spec_content = build_config.spec_template
 
-            # Compute EVR for build tracking and optional changelog injection
-            raw_ver = build_config.version or '1.0.0'
-            raw_rel = build_config.release or '1'
+            # Pre-build EVR estimate for changelog injection. The authoritative EVR is
+            # read from the built RPM after rpmbuild (see evr_from_rpm_files).
+            raw_ver = build_config.version or _spec_field(spec_content, 'Version') or '1.0.0'
+            raw_rel = build_config.release or _spec_field(spec_content, 'Release') or '1'
             if remote_val or ts_val:
                 raw_ver = raw_ver.replace("%(remote)", remote_val).replace("%(timestamp)", ts_val)
                 raw_rel = raw_rel.replace("%(remote)", remote_val).replace("%(timestamp)", ts_val)
@@ -139,9 +198,9 @@ class RPMWorks:
         # Use Template from DB or Fallback
         template = build_config.spec_template
 
-        # Prepare Version and Release values
-        ver_val = build_config.version or '1.0.0'
-        rel_val = build_config.release or '1'
+        # Prepare Version and Release values (UI fields first, then the template's own tags)
+        ver_val = build_config.version or _spec_field(template, 'Version') or '1.0.0'
+        rel_val = build_config.release or _spec_field(template, 'Release') or '1'
         # Replace dynamic placeholders in version/release
         if remote_val or ts_val:
             ver_val = ver_val.replace("%(remote)", remote_val).replace("%(timestamp)", ts_val)
@@ -676,6 +735,19 @@ rm -rf %{{buildroot}}
                     
                     new_build.rpm_files = rpm_files
                     log_msg(f"Generated packages: {', '.join([os.path.basename(f) for f in rpm_files])}")
+
+                    # Track the EVR actually built, not the pre-build estimate from the spec/UI fields
+                    expected_name = (project.build_config.rpm_name or project.name) + name_suffix
+                    actual_evr = evr_from_rpm_files(rpm_files, expected_name)
+                    if actual_evr:
+                        if actual_evr != build_evr:
+                            log_msg(f"Build EVR from RPM header: {actual_evr} (spec estimate was {build_evr})")
+                        build_evr = actual_evr
+                        new_build.build_evr = actual_evr
+                    else:
+                        log_msg("WARNING: could not determine EVR from built RPMs — clearing build_evr")
+                        new_build.build_evr = None
+                    db_session.commit()
 
                     # 6. Run post-build script (non-fatal — a script failure must not fail the build)
                     if project.source_config.post_build_script:
