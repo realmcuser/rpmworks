@@ -218,3 +218,81 @@ class SystemSettings(Base):
     id = Column(Integer, primary_key=True, index=True)
     key = Column(String, unique=True, nullable=False)
     value = Column(String, nullable=True)
+
+
+class ReleaseGroup(Base):
+    __tablename__ = "release_groups"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, nullable=False)
+    bundle_package_name = Column(String, nullable=False)
+    anchor_project_id = Column(Integer, ForeignKey("projects.id", ondelete="RESTRICT"), nullable=False)
+    devel_repository_id = Column(Integer, ForeignKey("repositories.id", ondelete="RESTRICT"), nullable=False)
+    stable_repository_id = Column(Integer, ForeignKey("repositories.id", ondelete="RESTRICT"), nullable=False)
+    target_distribution_id = Column(String, ForeignKey("distributions.id", ondelete="RESTRICT"), nullable=False)
+
+    anchor_project = relationship("Project", foreign_keys=[anchor_project_id])
+    devel_repository = relationship("Repository", foreign_keys=[devel_repository_id])
+    stable_repository = relationship("Repository", foreign_keys=[stable_repository_id])
+    target_distribution = relationship("Distribution", foreign_keys=[target_distribution_id])
+    members = relationship("ReleaseGroupMember", cascade="all, delete-orphan")
+    releases = relationship("Release", cascade="all, delete-orphan", back_populates="release_group")
+
+
+class ReleaseGroupMember(Base):
+    __tablename__ = "release_group_members"
+
+    release_group_id = Column(Integer, ForeignKey("release_groups.id", ondelete="CASCADE"), primary_key=True)
+    project_id = Column(Integer, ForeignKey("projects.id", ondelete="CASCADE"), primary_key=True)
+
+    project = relationship("Project")
+
+
+class Release(Base):
+    __tablename__ = "releases"
+
+    id = Column(Integer, primary_key=True, index=True)
+    release_group_id = Column(Integer, ForeignKey("release_groups.id", ondelete="CASCADE"), nullable=False)
+    version = Column(String, nullable=False)
+    release_str = Column(String, nullable=False)
+    channel = Column(String, nullable=False, default="devel")  # 'devel' or 'stable'
+    bundle_rpm_filename = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    promoted_at = Column(DateTime(timezone=True), nullable=True)
+    promoted_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+
+    release_group = relationship("ReleaseGroup", back_populates="releases")
+    created_by = relationship("User", foreign_keys=[created_by_user_id])
+    promoted_by = relationship("User", foreign_keys=[promoted_by_user_id])
+    locked_builds = relationship("ReleaseBuild", cascade="all, delete-orphan", back_populates="release")
+    events = relationship("ReleaseEvent", cascade="all, delete-orphan", back_populates="release")
+
+
+class ReleaseBuild(Base):
+    __tablename__ = "release_builds"
+
+    id = Column(Integer, primary_key=True, index=True)
+    release_id = Column(Integer, ForeignKey("releases.id", ondelete="CASCADE"), nullable=False)
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=False)
+    build_id = Column(Integer, ForeignKey("builds.id"), nullable=False)
+    rpm_evr = Column(String, nullable=False)
+    rpm_filenames = Column(JSON, nullable=False)  # list of basenames
+
+    release = relationship("Release", back_populates="locked_builds")
+    project = relationship("Project")
+    build = relationship("Build")
+
+
+class ReleaseEvent(Base):
+    __tablename__ = "release_events"
+
+    id = Column(Integer, primary_key=True, index=True)
+    release_id = Column(Integer, ForeignKey("releases.id", ondelete="CASCADE"), nullable=False)
+    action = Column(String, nullable=False)  # 'created', 'promoted', 'reverted'
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    timestamp = Column(DateTime(timezone=True), server_default=func.now())
+    detail = Column(JSON, nullable=True)
+
+    release = relationship("Release", back_populates="events")
+    user = relationship("User")

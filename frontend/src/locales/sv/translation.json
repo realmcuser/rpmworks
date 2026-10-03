@@ -26,6 +26,7 @@
     "builds": "Byggen",
     "repositories": "Paketförråd",
     "distributions": "Måldistributioner",
+    "releases": "Utgåvor",
     "activity": "Aktivitet",
     "settings": "Inställningar",
     "logout": "Logga ut"
@@ -90,6 +91,26 @@
       "delete": "Ta bort",
       "noGroups": "Inga projektgrupper definierade.",
       "noProjects": "Inga projekt i denna grupp."
+    },
+    "releaseGroups": {
+      "title": "Utgåvegrupper",
+      "description": "Definiera grupper av projekt som ska versionssättas och befordras ihop.",
+      "add": "Lägg till utgåvegrupp",
+      "edit": "Redigera",
+      "delete": "Ta bort",
+      "noGroups": "Inga utgåvegrupper definierade.",
+      "name": "Namn",
+      "bundlePackageName": "Samlingspaketets namn",
+      "bundlePackageNameHint": "RPM-paketnamnet för samlingspaket (t.ex. fhdcore-fh). Bara a-z, 0-9, bindestreck, punkt, understreck.",
+      "anchorProject": "Ankarprojekt",
+      "anchorProjectHint": "Projektet vars version/release-nummer blir utgåvans identitet.",
+      "develRepository": "Devel-förråd",
+      "stableRepository": "Stable-förråd",
+      "targetDistribution": "Måldistribution",
+      "members": "Medlemsprojekt",
+      "membersHint": "Alla projekt som ingår i utgåvan (inklusive ankarprojektet).",
+      "cancel": "Avbryt",
+      "save": "Spara"
     }
   },
   "fileMapper": {
@@ -365,5 +386,35 @@
     "error": {
       "createFailed": "Kunde inte skapa projekt"
     }
+  },
+  "releases": {
+    "title": "Utgåvor",
+    "subtitle": "Hantera och befordra testade utgåvor från devel till stable.",
+    "noGroups": "Inga utgåvegrupper konfigurerade.",
+    "goToSettings": "Konfigurera i Inställningar",
+    "devel": "devel",
+    "stable": "stable",
+    "createRelease": "Skapa utgåva",
+    "promote": "Befordra →",
+    "revert": "← Ångra",
+    "delete": "Ta bort",
+    "confirmDelete": "Ta bort denna utgåva?",
+    "confirmPromote": "Befordra utgåva {{version}} till stable?",
+    "confirmRevert": "Ångra befordran av utgåva {{version}}? Den tas bort från stable men finns kvar i devel.",
+    "creating": "Skapar utgåva...",
+    "promoting": "Befordrar...",
+    "reverting": "Ångrar...",
+    "noReleases": "Inga utgåvor i denna kanal.",
+    "version": "Version",
+    "created": "Skapad",
+    "promotedAt": "Befordrad",
+    "by": "av",
+    "components": "Komponenter",
+    "bundlePackage": "Samlingspaket",
+    "channel": "Kanal",
+    "createError": "Misslyckades att skapa utgåva",
+    "promoteError": "Misslyckades att befordra utgåva",
+    "revertError": "Misslyckades att ångra befordran",
+    "deleteError": "Misslyckades att ta bort utgåva"
   }
 }

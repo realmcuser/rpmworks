@@ -26,6 +26,7 @@
     "builds": "Builds",
     "repositories": "Repositories",
     "distributions": "Distributions",
+    "releases": "Releases",
     "activity": "Activity",
     "settings": "Settings",
     "logout": "Log out"
@@ -90,6 +91,26 @@
       "delete": "Delete",
       "noGroups": "No project groups defined.",
       "noProjects": "No projects in this group."
+    },
+    "releaseGroups": {
+      "title": "Release Groups",
+      "description": "Define groups of projects to be versioned and promoted together.",
+      "add": "Add Release Group",
+      "edit": "Edit",
+      "delete": "Delete",
+      "noGroups": "No release groups defined.",
+      "name": "Name",
+      "bundlePackageName": "Bundle Package Name",
+      "bundlePackageNameHint": "RPM package name for the bundle (e.g. fhdcore-fh). Only a-z, 0-9, hyphens, dots, underscores.",
+      "anchorProject": "Anchor Project",
+      "anchorProjectHint": "The project whose version/release number becomes the release identity.",
+      "develRepository": "Devel Repository",
+      "stableRepository": "Stable Repository",
+      "targetDistribution": "Target Distribution",
+      "members": "Member Projects",
+      "membersHint": "All projects included in each release (including the anchor project).",
+      "cancel": "Cancel",
+      "save": "Save"
     }
   },
   "fileMapper": {
@@ -365,5 +386,35 @@
     "error": {
       "createFailed": "Failed to create project"
     }
+  },
+  "releases": {
+    "title": "Releases",
+    "subtitle": "Manage and promote tested releases from devel to stable.",
+    "noGroups": "No release groups configured.",
+    "goToSettings": "Configure in Settings",
+    "devel": "devel",
+    "stable": "stable",
+    "createRelease": "Create Release",
+    "promote": "Promote →",
+    "revert": "← Revert",
+    "delete": "Delete",
+    "confirmDelete": "Delete this release?",
+    "confirmPromote": "Promote release {{version}} to stable?",
+    "confirmRevert": "Revert release {{version}}? It will be removed from stable but remain in devel.",
+    "creating": "Creating release...",
+    "promoting": "Promoting...",
+    "reverting": "Reverting...",
+    "noReleases": "No releases in this channel.",
+    "version": "Version",
+    "created": "Created",
+    "promotedAt": "Promoted",
+    "by": "by",
+    "components": "Components",
+    "bundlePackage": "Bundle package",
+    "channel": "Channel",
+    "createError": "Failed to create release",
+    "promoteError": "Failed to promote release",
+    "revertError": "Failed to revert release",
+    "deleteError": "Failed to delete release"
   }
 }

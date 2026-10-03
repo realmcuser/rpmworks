@@ -9,6 +9,8 @@ import Login from './pages/Login';
 import ArtifactsPage from './pages/ArtifactsPage';
 import RepositoriesPage from './pages/RepositoriesPage';
 import DistributionsPage from './pages/DistributionsPage';
+import ReleasesPage from './pages/ReleasesPage';
+import ReleaseGroupPage from './pages/ReleaseGroupPage';
 import { AuthProvider, useAuth } from './context/AuthContext';
 
 // Auth guard
@@ -44,6 +46,8 @@ function AppRoutes() {
         <Route path="artifacts" element={<ArtifactsPage />} />
         <Route path="repos" element={<RepositoriesPage />} />
         <Route path="distributions" element={<DistributionsPage />} />
+        <Route path="release-groups" element={<ReleasesPage />} />
+        <Route path="release-groups/:id" element={<ReleaseGroupPage />} />
       </Route>
       
       <Route path="*" element={<Navigate to="/" replace />} />

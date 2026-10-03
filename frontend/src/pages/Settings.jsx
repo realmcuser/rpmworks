@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Users, Shield, Loader2, AlertCircle, Check, X, FolderTree, Plus, Pencil, Trash2, GripVertical, Network } from 'lucide-react';
-import { fetchUsers, updateUser, fetchAdminSettings, updateAdminSettings, fetchCurrentUser, fetchProjectGroups, createProjectGroup, updateProjectGroup, deleteProjectGroup, fetchProjects, reorderProjects, reorderProjectGroups, fetchLdapSettings, updateLdapSettings, testLdapConnection } from '../services/api';
+import { Users, Shield, Loader2, AlertCircle, Check, X, FolderTree, Plus, Pencil, Trash2, GripVertical, Network, GitBranch } from 'lucide-react';
+import { fetchUsers, updateUser, fetchAdminSettings, updateAdminSettings, fetchCurrentUser, fetchProjectGroups, createProjectGroup, updateProjectGroup, deleteProjectGroup, fetchProjects, reorderProjects, reorderProjectGroups, fetchLdapSettings, updateLdapSettings, testLdapConnection, getReleaseGroups, createReleaseGroup, updateReleaseGroup, deleteReleaseGroup, fetchRepositories, fetchDistributions } from '../services/api';
 
 const buildSections = (groupsList, projectsList) => {
   const sections = {};
@@ -40,6 +40,21 @@ const Settings = () => {
   const [ldapTesting, setLdapTesting] = useState(false);
   const [savedRoleId, setSavedRoleId] = useState(null);
 
+  // Release groups
+  const [releaseGroups, setReleaseGroups] = useState([]);
+  const [repositories, setRepositories] = useState([]);
+  const [distributions, setDistributions] = useState([]);
+  const [allProjects, setAllProjects] = useState([]);
+  const [rgError, setRgError] = useState(null);
+  const [showRgForm, setShowRgForm] = useState(false);
+  const [editingRg, setEditingRg] = useState(null);
+  const [rgForm, setRgForm] = useState({
+    name: '', bundle_package_name: '', anchor_project_id: '',
+    devel_repository_id: '', stable_repository_id: '',
+    target_distribution_id: '', member_project_ids: [],
+  });
+  const [rgSaving, setRgSaving] = useState(false);
+
   useEffect(() => {
     loadData();
   }, []);
@@ -52,18 +67,25 @@ const Settings = () => {
       setCurrentUser(user);
 
       if (user.role === 'admin') {
-        const [usersData, settingsData, groupsData, projectsData, ldapData] = await Promise.all([
+        const [usersData, settingsData, groupsData, projectsData, ldapData, rgData, reposData, distrosData] = await Promise.all([
           fetchUsers(),
           fetchAdminSettings(),
           fetchProjectGroups(),
           fetchProjects(),
           fetchLdapSettings(),
+          getReleaseGroups(),
+          fetchRepositories(),
+          fetchDistributions(),
         ]);
         setUsers(usersData);
         setSettings(settingsData);
         setGroups(groupsData);
         setSectionProjects(buildSections(groupsData, projectsData));
         setLdap(prev => ({ ...prev, ...ldapData, bind_password: '' }));
+        setReleaseGroups(rgData);
+        setRepositories(reposData);
+        setDistributions(distrosData);
+        setAllProjects(projectsData);
       }
     } catch (err) {
       setError(err.message);
@@ -717,6 +739,221 @@ const Settings = () => {
             {t('settings.projectGroups.add')}
           </button>
         </div>
+      </div>
+
+      {/* Release Groups */}
+      <div className="bg-surface border border-border rounded-xl p-6">
+        <h3 className="text-lg font-semibold text-white mb-1 flex items-center gap-2">
+          <GitBranch className="w-5 h-5" />
+          {t('settings.releaseGroups.title')}
+        </h3>
+        <p className="text-text/50 text-sm mb-4">{t('settings.releaseGroups.description')}</p>
+
+        {rgError && (
+          <div className="mb-3 p-3 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400 text-sm">{rgError}</div>
+        )}
+
+        {releaseGroups.length > 0 && (
+          <table className="w-full text-left text-sm mb-4">
+            <thead>
+              <tr className="text-text/40 border-b border-border">
+                <th className="pb-2 font-medium">{t('settings.releaseGroups.name')}</th>
+                <th className="pb-2 font-medium">{t('settings.releaseGroups.bundlePackageName')}</th>
+                <th className="pb-2 font-medium">{t('releases.components')}</th>
+                <th className="pb-2"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {releaseGroups.map(rg => (
+                <tr key={rg.id} className="border-b border-border/50">
+                  <td className="py-2 text-text font-medium">{rg.name}</td>
+                  <td className="py-2 font-mono text-text/70 text-xs">{rg.bundle_package_name}</td>
+                  <td className="py-2 text-text/50">{rg.members.length}</td>
+                  <td className="py-2 flex gap-2 justify-end">
+                    <button
+                      onClick={() => {
+                        setEditingRg(rg);
+                        setRgForm({
+                          name: rg.name,
+                          bundle_package_name: rg.bundle_package_name,
+                          anchor_project_id: String(rg.anchor_project_id),
+                          devel_repository_id: String(rg.devel_repository_id),
+                          stable_repository_id: String(rg.stable_repository_id),
+                          target_distribution_id: rg.target_distribution_id,
+                          member_project_ids: rg.members.map(m => m.project_id),
+                        });
+                        setShowRgForm(true);
+                      }}
+                      className="p-1 hover:text-primary text-text/40"
+                      title={t('settings.releaseGroups.edit')}
+                    >
+                      <Pencil className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={async () => {
+                        if (!window.confirm(`${t('settings.releaseGroups.delete')} "${rg.name}"?`)) return;
+                        setRgError(null);
+                        try {
+                          await deleteReleaseGroup(rg.id);
+                          setReleaseGroups(prev => prev.filter(g => g.id !== rg.id));
+                        } catch (e) { setRgError(e.message); }
+                      }}
+                      className="p-1 hover:text-red-400 text-text/40"
+                      title={t('settings.releaseGroups.delete')}
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+
+        {releaseGroups.length === 0 && !showRgForm && (
+          <p className="text-sm text-text/40 italic mb-4">{t('settings.releaseGroups.noGroups')}</p>
+        )}
+
+        {showRgForm ? (
+          <div className="border border-border rounded-lg p-4 space-y-3">
+            <h4 className="font-medium text-text text-sm">{editingRg ? t('settings.releaseGroups.edit') : t('settings.releaseGroups.add')}</h4>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs text-text/50 mb-1">{t('settings.releaseGroups.name')}</label>
+                <input value={rgForm.name} onChange={e => setRgForm(p => ({ ...p, name: e.target.value }))}
+                  className="w-full bg-background border border-border rounded px-3 py-1.5 text-text text-sm focus:outline-none focus:border-primary" />
+              </div>
+              <div>
+                <label className="block text-xs text-text/50 mb-1">{t('settings.releaseGroups.bundlePackageName')}</label>
+                <input value={rgForm.bundle_package_name} onChange={e => setRgForm(p => ({ ...p, bundle_package_name: e.target.value }))}
+                  className="w-full bg-background border border-border rounded px-3 py-1.5 text-text text-sm font-mono focus:outline-none focus:border-primary"
+                  placeholder="e.g. fhdcore-fh" />
+                <p className="text-xs text-text/30 mt-0.5">{t('settings.releaseGroups.bundlePackageNameHint')}</p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs text-text/50 mb-1">{t('settings.releaseGroups.develRepository')}</label>
+                <select value={rgForm.devel_repository_id} onChange={e => setRgForm(p => ({ ...p, devel_repository_id: e.target.value }))}
+                  className="w-full bg-background border border-border rounded px-3 py-1.5 text-text text-sm focus:outline-none focus:border-primary">
+                  <option value="">—</option>
+                  {repositories.filter(r => r.repo_type === 'ssh').map(r => (
+                    <option key={r.id} value={r.id}>{r.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs text-text/50 mb-1">{t('settings.releaseGroups.stableRepository')}</label>
+                <select value={rgForm.stable_repository_id} onChange={e => setRgForm(p => ({ ...p, stable_repository_id: e.target.value }))}
+                  className="w-full bg-background border border-border rounded px-3 py-1.5 text-text text-sm focus:outline-none focus:border-primary">
+                  <option value="">—</option>
+                  {repositories.filter(r => r.repo_type === 'ssh').map(r => (
+                    <option key={r.id} value={r.id}>{r.name}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs text-text/50 mb-1">{t('settings.releaseGroups.targetDistribution')}</label>
+                <select value={rgForm.target_distribution_id} onChange={e => setRgForm(p => ({ ...p, target_distribution_id: e.target.value }))}
+                  className="w-full bg-background border border-border rounded px-3 py-1.5 text-text text-sm focus:outline-none focus:border-primary">
+                  <option value="">—</option>
+                  {distributions.map(d => (
+                    <option key={d.id} value={d.id}>{d.name} ({d.id})</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs text-text/50 mb-1">{t('settings.releaseGroups.anchorProject')}</label>
+                <select value={rgForm.anchor_project_id} onChange={e => setRgForm(p => ({ ...p, anchor_project_id: e.target.value }))}
+                  className="w-full bg-background border border-border rounded px-3 py-1.5 text-text text-sm focus:outline-none focus:border-primary">
+                  <option value="">—</option>
+                  {allProjects.map(p => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
+                <p className="text-xs text-text/30 mt-0.5">{t('settings.releaseGroups.anchorProjectHint')}</p>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs text-text/50 mb-1">{t('settings.releaseGroups.members')}</label>
+              <p className="text-xs text-text/30 mb-2">{t('settings.releaseGroups.membersHint')}</p>
+              <div className="grid grid-cols-2 gap-1 max-h-40 overflow-y-auto">
+                {allProjects.map(p => (
+                  <label key={p.id} className="flex items-center gap-2 text-sm text-text cursor-pointer hover:text-primary">
+                    <input
+                      type="checkbox"
+                      checked={rgForm.member_project_ids.includes(p.id)}
+                      onChange={e => setRgForm(prev => ({
+                        ...prev,
+                        member_project_ids: e.target.checked
+                          ? [...prev.member_project_ids, p.id]
+                          : prev.member_project_ids.filter(id => id !== p.id),
+                      }))}
+                      className="accent-primary"
+                    />
+                    {p.name}
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex gap-2 pt-1">
+              <button
+                onClick={async () => {
+                  setRgError(null);
+                  setRgSaving(true);
+                  try {
+                    const payload = {
+                      ...rgForm,
+                      anchor_project_id: parseInt(rgForm.anchor_project_id),
+                      devel_repository_id: parseInt(rgForm.devel_repository_id),
+                      stable_repository_id: parseInt(rgForm.stable_repository_id),
+                    };
+                    if (editingRg) {
+                      const updated = await updateReleaseGroup(editingRg.id, payload);
+                      setReleaseGroups(prev => prev.map(g => g.id === editingRg.id ? updated : g));
+                    } else {
+                      const created = await createReleaseGroup(payload);
+                      setReleaseGroups(prev => [...prev, created]);
+                    }
+                    setShowRgForm(false);
+                    setEditingRg(null);
+                  } catch (e) { setRgError(e.message); }
+                  finally { setRgSaving(false); }
+                }}
+                disabled={rgSaving || !rgForm.name || !rgForm.bundle_package_name || !rgForm.anchor_project_id || !rgForm.devel_repository_id || !rgForm.stable_repository_id || !rgForm.target_distribution_id}
+                className="flex items-center gap-1 px-3 py-1.5 bg-primary hover:bg-primary-hover text-white rounded-lg text-sm font-medium disabled:opacity-50"
+              >
+                {rgSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                {t('settings.releaseGroups.save')}
+              </button>
+              <button
+                onClick={() => { setShowRgForm(false); setEditingRg(null); setRgError(null); }}
+                className="px-3 py-1.5 bg-surface-hover text-text rounded-lg text-sm"
+              >
+                {t('settings.releaseGroups.cancel')}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <button
+            onClick={() => {
+              setEditingRg(null);
+              setRgForm({ name: '', bundle_package_name: '', anchor_project_id: '', devel_repository_id: '', stable_repository_id: '', target_distribution_id: '', member_project_ids: [] });
+              setShowRgForm(true);
+            }}
+            className="flex items-center gap-1 px-3 py-1.5 bg-primary hover:bg-primary-hover text-white rounded-lg text-sm font-medium"
+          >
+            <Plus className="w-4 h-4" />
+            {t('settings.releaseGroups.add')}
+          </button>
+        )}
       </div>
     </div>
   );

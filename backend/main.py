@@ -11,6 +11,7 @@ import time
 import os
 import re
 import ssl
+import shutil
 try:
     from croniter import croniter as CronIter
     _CRONITER_AVAILABLE = True
@@ -61,6 +62,58 @@ with engine.connect() as _conn:
         FROM projects
         WHERE project_group_id IS NOT NULL
         ON CONFLICT DO NOTHING
+    """))
+    _conn.execute(text("""
+        CREATE TABLE IF NOT EXISTS release_groups (
+            id SERIAL PRIMARY KEY,
+            name VARCHAR NOT NULL UNIQUE,
+            bundle_package_name VARCHAR NOT NULL,
+            anchor_project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE RESTRICT,
+            devel_repository_id INTEGER NOT NULL REFERENCES repositories(id) ON DELETE RESTRICT,
+            stable_repository_id INTEGER NOT NULL REFERENCES repositories(id) ON DELETE RESTRICT,
+            target_distribution_id VARCHAR NOT NULL REFERENCES distributions(id) ON DELETE RESTRICT
+        )
+    """))
+    _conn.execute(text("""
+        CREATE TABLE IF NOT EXISTS release_group_members (
+            release_group_id INTEGER NOT NULL REFERENCES release_groups(id) ON DELETE CASCADE,
+            project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+            PRIMARY KEY (release_group_id, project_id)
+        )
+    """))
+    _conn.execute(text("""
+        CREATE TABLE IF NOT EXISTS releases (
+            id SERIAL PRIMARY KEY,
+            release_group_id INTEGER NOT NULL REFERENCES release_groups(id) ON DELETE CASCADE,
+            version VARCHAR NOT NULL,
+            release_str VARCHAR NOT NULL,
+            channel VARCHAR NOT NULL DEFAULT 'devel',
+            bundle_rpm_filename VARCHAR,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            created_by_user_id INTEGER REFERENCES users(id),
+            promoted_at TIMESTAMPTZ,
+            promoted_by_user_id INTEGER REFERENCES users(id)
+        )
+    """))
+    _conn.execute(text("""
+        CREATE TABLE IF NOT EXISTS release_builds (
+            id SERIAL PRIMARY KEY,
+            release_id INTEGER NOT NULL REFERENCES releases(id) ON DELETE CASCADE,
+            project_id INTEGER NOT NULL REFERENCES projects(id),
+            build_id INTEGER NOT NULL REFERENCES builds(id),
+            rpm_evr VARCHAR NOT NULL,
+            rpm_filenames JSONB NOT NULL
+        )
+    """))
+    _conn.execute(text("""
+        CREATE TABLE IF NOT EXISTS release_events (
+            id SERIAL PRIMARY KEY,
+            release_id INTEGER NOT NULL REFERENCES releases(id) ON DELETE CASCADE,
+            action VARCHAR NOT NULL,
+            user_id INTEGER REFERENCES users(id),
+            timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            detail JSONB
+        )
     """))
     _conn.commit()
 
@@ -884,6 +937,561 @@ async def reorder_projects(reorder: ProjectReorderRequest, db: Session = Depends
     db.commit()
 
 
+# ── Release Groups ──────────────────────────────────────────────────────────
+
+class ReleaseGroupCreate(BaseModel):
+    name: str
+    bundle_package_name: str
+    anchor_project_id: int
+    devel_repository_id: int
+    stable_repository_id: int
+    target_distribution_id: str
+    member_project_ids: List[int] = []
+
+class ReleaseGroupUpdate(BaseModel):
+    name: Optional[str] = None
+    bundle_package_name: Optional[str] = None
+    anchor_project_id: Optional[int] = None
+    devel_repository_id: Optional[int] = None
+    stable_repository_id: Optional[int] = None
+    target_distribution_id: Optional[str] = None
+    member_project_ids: Optional[List[int]] = None
+
+class ReleaseGroupMemberSchema(BaseModel):
+    project_id: int
+    project_name: str
+    class Config:
+        from_attributes = True
+
+class ReleaseGroupSchema(BaseModel):
+    id: int
+    name: str
+    bundle_package_name: str
+    anchor_project_id: int
+    devel_repository_id: int
+    stable_repository_id: int
+    target_distribution_id: str
+    members: List[ReleaseGroupMemberSchema] = []
+    class Config:
+        from_attributes = True
+
+class ReleaseBuildSchema(BaseModel):
+    id: int
+    project_id: int
+    project_name: str
+    build_id: int
+    rpm_evr: str
+    rpm_filenames: List[str]
+    class Config:
+        from_attributes = True
+
+class ReleaseEventSchema(BaseModel):
+    id: int
+    action: str
+    username: Optional[str] = None
+    timestamp: Optional[datetime] = None
+    detail: Optional[dict] = None
+    class Config:
+        from_attributes = True
+
+class ReleaseSchema(BaseModel):
+    id: int
+    release_group_id: int
+    version: str
+    release_str: str
+    channel: str
+    bundle_rpm_filename: Optional[str] = None
+    created_at: Optional[datetime] = None
+    created_by_username: Optional[str] = None
+    promoted_at: Optional[datetime] = None
+    promoted_by_username: Optional[str] = None
+    locked_builds: List[ReleaseBuildSchema] = []
+    events: List[ReleaseEventSchema] = []
+    class Config:
+        from_attributes = True
+
+class CreateReleaseRequest(BaseModel):
+    build_ids: dict = {}         # {str(project_id): int | None}
+    changelog_message: Optional[str] = None
+
+_RPM_NAME_RE = re.compile(r'^[a-zA-Z0-9._-]+$')
+
+
+def _serialize_release(r: models.Release) -> ReleaseSchema:
+    locked = []
+    for rb in r.locked_builds:
+        locked.append(ReleaseBuildSchema(
+            id=rb.id,
+            project_id=rb.project_id,
+            project_name=rb.project.name if rb.project else str(rb.project_id),
+            build_id=rb.build_id,
+            rpm_evr=rb.rpm_evr,
+            rpm_filenames=rb.rpm_filenames or [],
+        ))
+    events = []
+    for ev in r.events:
+        events.append(ReleaseEventSchema(
+            id=ev.id,
+            action=ev.action,
+            username=ev.user.username if ev.user else None,
+            timestamp=ev.timestamp,
+            detail=ev.detail,
+        ))
+    return ReleaseSchema(
+        id=r.id,
+        release_group_id=r.release_group_id,
+        version=r.version,
+        release_str=r.release_str,
+        channel=r.channel,
+        bundle_rpm_filename=r.bundle_rpm_filename,
+        created_at=r.created_at,
+        created_by_username=r.created_by.username if r.created_by else None,
+        promoted_at=r.promoted_at,
+        promoted_by_username=r.promoted_by.username if r.promoted_by else None,
+        locked_builds=locked,
+        events=events,
+    )
+
+
+def _serialize_group(g: models.ReleaseGroup) -> ReleaseGroupSchema:
+    members = [
+        ReleaseGroupMemberSchema(
+            project_id=m.project_id,
+            project_name=m.project.name if m.project else str(m.project_id),
+        )
+        for m in g.members
+    ]
+    return ReleaseGroupSchema(
+        id=g.id,
+        name=g.name,
+        bundle_package_name=g.bundle_package_name,
+        anchor_project_id=g.anchor_project_id,
+        devel_repository_id=g.devel_repository_id,
+        stable_repository_id=g.stable_repository_id,
+        target_distribution_id=g.target_distribution_id,
+        members=members,
+    )
+
+
+@app.get("/api/release-groups", response_model=List[ReleaseGroupSchema])
+async def get_release_groups(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    return [_serialize_group(g) for g in db.query(models.ReleaseGroup).order_by(models.ReleaseGroup.id).all()]
+
+
+@app.post("/api/release-groups", response_model=ReleaseGroupSchema)
+async def create_release_group(body: ReleaseGroupCreate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_admin)):
+    if not _RPM_NAME_RE.match(body.bundle_package_name):
+        raise HTTPException(status_code=422, detail="bundle_package_name contains invalid characters (only a-z, 0-9, . _ - allowed)")
+    if db.query(models.ReleaseGroup).filter(models.ReleaseGroup.name == body.name).first():
+        raise HTTPException(status_code=400, detail="Release group name already exists")
+    g = models.ReleaseGroup(
+        name=body.name,
+        bundle_package_name=body.bundle_package_name,
+        anchor_project_id=body.anchor_project_id,
+        devel_repository_id=body.devel_repository_id,
+        stable_repository_id=body.stable_repository_id,
+        target_distribution_id=body.target_distribution_id,
+    )
+    db.add(g)
+    db.commit()
+    db.refresh(g)
+    for pid in body.member_project_ids:
+        db.add(models.ReleaseGroupMember(release_group_id=g.id, project_id=pid))
+    db.commit()
+    db.refresh(g)
+    return _serialize_group(g)
+
+
+@app.put("/api/release-groups/{group_id}", response_model=ReleaseGroupSchema)
+async def update_release_group(group_id: int, body: ReleaseGroupUpdate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_admin)):
+    g = db.query(models.ReleaseGroup).filter(models.ReleaseGroup.id == group_id).first()
+    if not g:
+        raise HTTPException(status_code=404, detail="Release group not found")
+    if body.name is not None:
+        g.name = body.name
+    if body.bundle_package_name is not None:
+        if not _RPM_NAME_RE.match(body.bundle_package_name):
+            raise HTTPException(status_code=422, detail="bundle_package_name contains invalid characters")
+        g.bundle_package_name = body.bundle_package_name
+    if body.anchor_project_id is not None:
+        g.anchor_project_id = body.anchor_project_id
+    if body.devel_repository_id is not None:
+        g.devel_repository_id = body.devel_repository_id
+    if body.stable_repository_id is not None:
+        g.stable_repository_id = body.stable_repository_id
+    if body.target_distribution_id is not None:
+        g.target_distribution_id = body.target_distribution_id
+    if body.member_project_ids is not None:
+        db.query(models.ReleaseGroupMember).filter(
+            models.ReleaseGroupMember.release_group_id == group_id
+        ).delete()
+        for pid in body.member_project_ids:
+            db.add(models.ReleaseGroupMember(release_group_id=group_id, project_id=pid))
+    db.commit()
+    db.refresh(g)
+    return _serialize_group(g)
+
+
+@app.delete("/api/release-groups/{group_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_release_group(group_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_admin)):
+    g = db.query(models.ReleaseGroup).filter(models.ReleaseGroup.id == group_id).first()
+    if not g:
+        raise HTTPException(status_code=404, detail="Release group not found")
+    stable_count = db.query(models.Release).filter(
+        models.Release.release_group_id == group_id,
+        models.Release.channel == "stable",
+    ).count()
+    if stable_count > 0:
+        raise HTTPException(status_code=400, detail=f"Cannot delete: {stable_count} release(s) are currently in stable channel")
+    db.delete(g)
+    db.commit()
+
+
+@app.get("/api/release-groups/{group_id}/releases", response_model=List[ReleaseSchema])
+async def get_releases(group_id: int, channel: Optional[str] = None, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    g = db.query(models.ReleaseGroup).filter(models.ReleaseGroup.id == group_id).first()
+    if not g:
+        raise HTTPException(status_code=404, detail="Release group not found")
+    q = db.query(models.Release).filter(models.Release.release_group_id == group_id)
+    if channel in ("devel", "stable"):
+        q = q.filter(models.Release.channel == channel)
+    releases = q.order_by(models.Release.id.desc()).all()
+    return [_serialize_release(r) for r in releases]
+
+
+@app.get("/api/releases/{release_id}", response_model=ReleaseSchema)
+async def get_release(release_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    r = db.query(models.Release).filter(models.Release.id == release_id).first()
+    if not r:
+        raise HTTPException(status_code=404, detail="Release not found")
+    return _serialize_release(r)
+
+
+@app.post("/api/release-groups/{group_id}/releases", response_model=ReleaseSchema)
+async def create_release(group_id: int, body: CreateReleaseRequest, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    from services.bundle_service import BundleService
+    from services.deployment_service import DeploymentService
+
+    g = db.query(models.ReleaseGroup).filter(models.ReleaseGroup.id == group_id).first()
+    if not g:
+        raise HTTPException(status_code=404, detail="Release group not found")
+
+    member_ids = [m.project_id for m in g.members]
+    if not member_ids:
+        raise HTTPException(status_code=400, detail="Release group has no member projects")
+
+    # Resolve builds: explicit build_id or latest successful build deployed to devel_repository
+    locked = []
+    for pid in member_ids:
+        proj = db.query(models.Project).filter(models.Project.id == pid).first()
+        if not proj:
+            raise HTTPException(status_code=404, detail=f"Member project {pid} not found")
+
+        explicit_bid = body.build_ids.get(str(pid))
+        if explicit_bid is not None:
+            build = db.query(models.Build).filter(
+                models.Build.id == explicit_bid,
+                models.Build.project_id == pid,
+                models.Build.status == "success",
+            ).first()
+            if not build:
+                raise HTTPException(status_code=400, detail=f"Build {explicit_bid} for project {pid} not found or not successful")
+        else:
+            # Latest successful build deployed to devel_repository
+            depl = (
+                db.query(models.Deployment)
+                .join(models.Build, models.Deployment.build_id == models.Build.id)
+                .filter(
+                    models.Build.project_id == pid,
+                    models.Build.status == "success",
+                    models.Deployment.repository_id == g.devel_repository_id,
+                    models.Deployment.status == "success",
+                )
+                .order_by(models.Deployment.id.desc())
+                .first()
+            )
+            if not depl:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"No successful deployment to devel repository found for project '{proj.name}' (id={pid})"
+                )
+            build = db.query(models.Build).filter(models.Build.id == depl.build_id).first()
+
+        if not build.build_evr:
+            raise HTTPException(status_code=400, detail=f"Build {build.id} for project '{proj.name}' has no EVR recorded")
+
+        rpm_filenames = [os.path.basename(f) for f in (build.rpm_files or [])]
+        locked.append({
+            "project": proj,
+            "build": build,
+            "evr": build.build_evr,
+            "filenames": rpm_filenames,
+        })
+
+    # Determine version/release_str from anchor project's locked build
+    anchor_entry = next((e for e in locked if e["project"].id == g.anchor_project_id), None)
+    if not anchor_entry:
+        raise HTTPException(status_code=400, detail=f"Anchor project {g.anchor_project_id} is not a member of this release group")
+
+    evr = anchor_entry["evr"]  # e.g. "1.0.0-83.el9"
+    if "-" not in evr:
+        raise HTTPException(status_code=400, detail=f"Anchor build EVR '{evr}' is not in version-release format")
+    version, release_str = evr.split("-", 1)
+
+    # Build the bundle RPM
+    requires = [{"name": e["project"].build_config.rpm_name or e["project"].name, "evr": e["evr"]} for e in locked]
+    svc = BundleService()
+    success, build_log, rpm_filename = svc.build_bundle(
+        release_id=0,  # temp ID — we create the DB record after build
+        bundle_name=g.bundle_package_name,
+        version=version,
+        release_str=release_str,
+        requires=requires,
+        container_image=g.target_distribution_id,
+    )
+    if not success:
+        raise HTTPException(status_code=500, detail=f"Bundle build failed:\n{build_log}")
+
+    # Create DB release record
+    release = models.Release(
+        release_group_id=group_id,
+        version=version,
+        release_str=release_str,
+        channel="devel",
+        bundle_rpm_filename=rpm_filename,
+        created_by_user_id=current_user.id,
+    )
+    db.add(release)
+    db.commit()
+    db.refresh(release)
+
+    # Move bundle workspace from temp id=0 to real release.id
+    from services.bundle_service import RELEASES_ROOT
+    tmp_path = os.path.join(RELEASES_ROOT, "0")
+    real_path = os.path.join(RELEASES_ROOT, str(release.id))
+    if os.path.exists(tmp_path):
+        shutil.move(tmp_path, real_path)
+
+    # Create release_builds records
+    for e in locked:
+        db.add(models.ReleaseBuild(
+            release_id=release.id,
+            project_id=e["project"].id,
+            build_id=e["build"].id,
+            rpm_evr=e["evr"],
+            rpm_filenames=e["filenames"],
+        ))
+
+    # Deploy bundle RPM to devel repository
+    bundle_local_path = svc.get_bundle_local_path(release.id, rpm_filename)
+    devel_repo = g.devel_repository
+    disto_path = db.query(models.RepositoryPath).filter(
+        models.RepositoryPath.repository_id == g.devel_repository_id,
+        models.RepositoryPath.distribution_id == g.target_distribution_id,
+    ).first()
+    if disto_path and os.path.exists(bundle_local_path):
+        from services.ssh_service import SSHService
+        ssh = SSHService()
+        connected, msg = ssh.connect(devel_repo.host, devel_repo.username, devel_repo.password, devel_repo.ssh_key_path)
+        if connected:
+            sftp = ssh.client.open_sftp()
+            try:
+                remote_dir = disto_path.base_path
+                ssh.client.exec_command(f"mkdir -p {remote_dir}")
+                sftp.put(bundle_local_path, os.path.join(remote_dir, rpm_filename))
+            finally:
+                sftp.close()
+            stdin, stdout, stderr = ssh.client.exec_command(f"createrepo --update {remote_dir}")
+            stdout.read()
+            ssh.close()
+
+    db.add(models.ReleaseEvent(
+        release_id=release.id,
+        action="created",
+        user_id=current_user.id,
+        detail={"version": version, "release_str": release_str, "bundle_rpm": rpm_filename},
+    ))
+    db.commit()
+    db.refresh(release)
+    return _serialize_release(release)
+
+
+@app.post("/api/releases/{release_id}/promote", response_model=ReleaseSchema)
+async def promote_release(release_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_admin)):
+    from services.bundle_service import BundleService, RELEASES_ROOT
+    from services.ssh_service import SSHService
+
+    r = db.query(models.Release).filter(models.Release.id == release_id).first()
+    if not r:
+        raise HTTPException(status_code=404, detail="Release not found")
+    if r.channel != "devel":
+        raise HTTPException(status_code=400, detail="Release is not in devel channel")
+
+    g = r.release_group
+    devel_repo = g.devel_repository
+    stable_repo = g.stable_repository
+
+    if devel_repo.host != stable_repo.host:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Promotion requires devel and stable repositories on the same SSH host (devel={devel_repo.host}, stable={stable_repo.host})"
+        )
+
+    devel_path_rec = db.query(models.RepositoryPath).filter(
+        models.RepositoryPath.repository_id == g.devel_repository_id,
+        models.RepositoryPath.distribution_id == g.target_distribution_id,
+    ).first()
+    stable_path_rec = db.query(models.RepositoryPath).filter(
+        models.RepositoryPath.repository_id == g.stable_repository_id,
+        models.RepositoryPath.distribution_id == g.target_distribution_id,
+    ).first()
+
+    if not devel_path_rec:
+        raise HTTPException(status_code=400, detail=f"No devel repository path configured for distribution '{g.target_distribution_id}'")
+    if not stable_path_rec:
+        raise HTTPException(status_code=400, detail=f"No stable repository path configured for distribution '{g.target_distribution_id}'")
+
+    devel_path = devel_path_rec.base_path
+    stable_path = stable_path_rec.base_path
+
+    # Collect all filenames: component RPMs + bundle RPM
+    all_filenames = []
+    for rb in r.locked_builds:
+        all_filenames.extend(rb.rpm_filenames or [])
+    if r.bundle_rpm_filename:
+        all_filenames.append(r.bundle_rpm_filename)
+
+    ssh = SSHService()
+    connected, msg = ssh.connect(stable_repo.host, stable_repo.username, stable_repo.password, stable_repo.ssh_key_path)
+    if not connected:
+        raise HTTPException(status_code=500, detail=f"SSH connection to stable repo failed: {msg}")
+
+    try:
+        stdin, stdout, stderr = ssh.client.exec_command(f"mkdir -p {stable_path}")
+        if stdout.channel.recv_exit_status() != 0:
+            raise HTTPException(status_code=500, detail=f"Failed to create stable directory: {stderr.read().decode()}")
+
+        for filename in all_filenames:
+            src = f"{devel_path}/{filename}"
+            dst = f"{stable_path}/{filename}"
+            cmd = f"cp {src} {dst}"
+            stdin, stdout, stderr = ssh.client.exec_command(cmd)
+            rc = stdout.channel.recv_exit_status()
+            if rc != 0:
+                err = stderr.read().decode().strip()
+                raise HTTPException(status_code=500, detail=f"Failed to copy {filename}: {err}")
+
+        stdin, stdout, stderr = ssh.client.exec_command(f"createrepo --update {stable_path}")
+        rc = stdout.channel.recv_exit_status()
+        if rc != 0:
+            err = stderr.read().decode().strip()
+            raise HTTPException(status_code=500, detail=f"createrepo failed on stable: {err}")
+    finally:
+        ssh.close()
+
+    from datetime import datetime as _dt
+    r.channel = "stable"
+    r.promoted_at = _dt.now(tz=__import__('datetime').timezone.utc)
+    r.promoted_by_user_id = current_user.id
+    db.add(models.ReleaseEvent(
+        release_id=r.id,
+        action="promoted",
+        user_id=current_user.id,
+        detail={"files_copied": len(all_filenames)},
+    ))
+    db.commit()
+    db.refresh(r)
+    return _serialize_release(r)
+
+
+@app.post("/api/releases/{release_id}/revert", response_model=ReleaseSchema)
+async def revert_release(release_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_admin)):
+    from services.ssh_service import SSHService
+
+    r = db.query(models.Release).filter(models.Release.id == release_id).first()
+    if not r:
+        raise HTTPException(status_code=404, detail="Release not found")
+    if r.channel != "stable":
+        raise HTTPException(status_code=400, detail="Release is not in stable channel")
+
+    g = r.release_group
+    stable_repo = g.stable_repository
+    stable_path_rec = db.query(models.RepositoryPath).filter(
+        models.RepositoryPath.repository_id == g.stable_repository_id,
+        models.RepositoryPath.distribution_id == g.target_distribution_id,
+    ).first()
+    if not stable_path_rec:
+        raise HTTPException(status_code=400, detail=f"No stable repository path configured for distribution '{g.target_distribution_id}'")
+
+    stable_path = stable_path_rec.base_path
+
+    # Find all filenames for this release
+    my_filenames = set()
+    for rb in r.locked_builds:
+        my_filenames.update(rb.rpm_filenames or [])
+    if r.bundle_rpm_filename:
+        my_filenames.add(r.bundle_rpm_filename)
+
+    # Do NOT remove files that are also locked by another stable release
+    other_stable_releases = db.query(models.Release).filter(
+        models.Release.release_group_id == g.id,
+        models.Release.channel == "stable",
+        models.Release.id != release_id,
+    ).all()
+    protected = set()
+    for other in other_stable_releases:
+        for rb in other.locked_builds:
+            protected.update(rb.rpm_filenames or [])
+        if other.bundle_rpm_filename:
+            protected.add(other.bundle_rpm_filename)
+
+    to_remove = my_filenames - protected
+
+    ssh = SSHService()
+    connected, msg = ssh.connect(stable_repo.host, stable_repo.username, stable_repo.password, stable_repo.ssh_key_path)
+    if not connected:
+        raise HTTPException(status_code=500, detail=f"SSH connection to stable repo failed: {msg}")
+
+    try:
+        for filename in to_remove:
+            cmd = f"rm -f {stable_path}/{filename}"
+            ssh.client.exec_command(cmd)
+
+        stdin, stdout, stderr = ssh.client.exec_command(f"createrepo --update {stable_path}")
+        rc = stdout.channel.recv_exit_status()
+        if rc != 0:
+            err = stderr.read().decode().strip()
+            raise HTTPException(status_code=500, detail=f"createrepo failed: {err}")
+    finally:
+        ssh.close()
+
+    r.channel = "devel"
+    r.promoted_at = None
+    r.promoted_by_user_id = None
+    db.add(models.ReleaseEvent(
+        release_id=r.id,
+        action="reverted",
+        user_id=current_user.id,
+        detail={"files_removed_from_stable": list(to_remove)},
+    ))
+    db.commit()
+    db.refresh(r)
+    return _serialize_release(r)
+
+
+@app.delete("/api/releases/{release_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_release(release_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_admin)):
+    from services.bundle_service import BundleService
+    r = db.query(models.Release).filter(models.Release.id == release_id).first()
+    if not r:
+        raise HTTPException(status_code=404, detail="Release not found")
+    if r.channel == "stable":
+        raise HTTPException(status_code=400, detail="Cannot delete a release that is in stable channel. Revert it first.")
+    BundleService().cleanup(r.id)
+    db.delete(r)
+    db.commit()
+
+
 def auto_deploy_build(build, project_id, db):
     """Auto-deploy a successful build to targets with auto_publish=True, using per-distro paths."""
     targets = db.query(models.DeploymentTarget).filter(
@@ -1118,6 +1726,12 @@ def _start_build_core(project: models.Project, changelog_message: Optional[str],
                 models.Build.build_number.in_(oldest_numbers)
             ).all()
             for b in builds_to_delete:
+                locked = db.query(models.ReleaseBuild).filter(
+                    models.ReleaseBuild.build_id == b.id
+                ).first()
+                if locked:
+                    print(f"Retention: skipping deletion of build {b.id} (locked by a release)")
+                    continue
                 delete_build_files(b.id)
                 db.delete(b)
             db.commit()
@@ -1403,10 +2017,6 @@ async def create_project(project_in: ProjectCreate, db: Session = Depends(get_db
     db.commit()
     
     return db_project
-
-import shutil
-
-# ... existing imports ...
 
 # Helper to delete build files
 def delete_build_files(build_id: int):

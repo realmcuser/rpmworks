@@ -516,3 +516,67 @@ export async function runPrefetchScript(projectId) {
   }
   return response.json();
 }
+
+// ── Release Groups ───────────────────────────────────────────────────────────
+
+export async function getReleaseGroups() {
+  const r = await fetchWithAuth('/api/release-groups');
+  if (!r.ok) throw new Error('Failed to fetch release groups');
+  return r.json();
+}
+
+export async function createReleaseGroup(data) {
+  const r = await fetchWithAuth('/api/release-groups', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+  if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.detail || 'Failed to create release group'); }
+  return r.json();
+}
+
+export async function updateReleaseGroup(id, data) {
+  const r = await fetchWithAuth(`/api/release-groups/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+  if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.detail || 'Failed to update release group'); }
+  return r.json();
+}
+
+export async function deleteReleaseGroup(id) {
+  const r = await fetchWithAuth(`/api/release-groups/${id}`, { method: 'DELETE' });
+  if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.detail || 'Failed to delete release group'); }
+}
+
+export async function getReleases(groupId, channel) {
+  const qs = channel ? `?channel=${channel}` : '';
+  const r = await fetchWithAuth(`/api/release-groups/${groupId}/releases${qs}`);
+  if (!r.ok) throw new Error('Failed to fetch releases');
+  return r.json();
+}
+
+export async function createRelease(groupId, buildIds = {}, changelogMessage = '') {
+  const r = await fetchWithAuth(`/api/release-groups/${groupId}/releases`, {
+    method: 'POST',
+    body: JSON.stringify({ build_ids: buildIds, changelog_message: changelogMessage }),
+  });
+  if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.detail || 'Failed to create release'); }
+  return r.json();
+}
+
+export async function promoteRelease(releaseId) {
+  const r = await fetchWithAuth(`/api/releases/${releaseId}/promote`, { method: 'POST' });
+  if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.detail || 'Failed to promote release'); }
+  return r.json();
+}
+
+export async function revertRelease(releaseId) {
+  const r = await fetchWithAuth(`/api/releases/${releaseId}/revert`, { method: 'POST' });
+  if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.detail || 'Failed to revert release'); }
+  return r.json();
+}
+
+export async function deleteRelease(releaseId) {
+  const r = await fetchWithAuth(`/api/releases/${releaseId}`, { method: 'DELETE' });
+  if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.detail || 'Failed to delete release'); }
+}

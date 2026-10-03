@@ -7,7 +7,8 @@ import {
   Settings,
   Target,
   Package,
-  LogOut
+  LogOut,
+  GitBranch
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { useAuth } from '../../context/AuthContext';
@@ -26,6 +27,7 @@ const Sidebar = () => {
     { icon: Box, label: "Artifacts", path: '/artifacts' },
     { icon: Server, label: t('sidebar.repositories'), path: '/repos' },
     { icon: Target, label: t('sidebar.distributions'), path: '/distributions' },
+    { icon: GitBranch, label: t('sidebar.releases'), path: '/release-groups' },
   ];
 
   return (
