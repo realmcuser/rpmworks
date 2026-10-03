@@ -59,6 +59,9 @@ STATUS_20260126.md
 AGENTS.md
 DESIGN.md
 
+# SQLite artifacts (project uses PostgreSQL — these are accidental)
+*.db
+
 # Secrets and local config
 .env
 *.env
