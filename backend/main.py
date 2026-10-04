@@ -1253,39 +1253,40 @@ async def create_release(group_id: int, body: CreateReleaseRequest, db: Session 
         raise HTTPException(status_code=400, detail=f"Anchor build EVR '{evr}' is not in version-release format")
     version, release_str = evr.split("-", 1)
 
-    # Build the bundle RPM
-    requires = [{"name": e["project"].build_config.rpm_name or e["project"].name, "evr": e["evr"]} for e in locked]
-    svc = BundleService()
-    success, build_log, rpm_filename = svc.build_bundle(
-        release_id=0,  # temp ID — we create the DB record after build
-        bundle_name=g.bundle_package_name,
-        version=version,
-        release_str=release_str,
-        requires=requires,
-        container_image=g.target_distribution_id,
-    )
-    if not success:
-        raise HTTPException(status_code=500, detail=f"Bundle build failed:\n{build_log}")
-
-    # Create DB release record
+    # Create the DB record first (with no bundle filename yet) so we get a real
+    # release.id to embed in the bundle's Release field — prevents filename
+    # collisions when the anchor version stays the same across releases.
     release = models.Release(
         release_group_id=group_id,
         version=version,
         release_str=release_str,
         channel="devel",
-        bundle_rpm_filename=rpm_filename,
+        bundle_rpm_filename=None,
         created_by_user_id=current_user.id,
     )
     db.add(release)
-    db.commit()
-    db.refresh(release)
+    db.flush()  # assigns release.id without committing
 
-    # Move bundle workspace from temp id=0 to real release.id
-    from services.bundle_service import RELEASES_ROOT
-    tmp_path = os.path.join(RELEASES_ROOT, "0")
-    real_path = os.path.join(RELEASES_ROOT, str(release.id))
-    if os.path.exists(tmp_path):
-        shutil.move(tmp_path, real_path)
+    # Embed release.id in the bundle's Release field: r{id}.{anchor_release}
+    # This guarantees a unique RPM EVR even when the anchor version is unchanged.
+    bundle_release_str = f"r{release.id}.{release_str}"
+
+    # Build the bundle RPM
+    requires = [{"name": e["project"].build_config.rpm_name or e["project"].name, "evr": e["evr"]} for e in locked]
+    svc = BundleService()
+    success, build_log, rpm_filename = svc.build_bundle(
+        release_id=release.id,
+        bundle_name=g.bundle_package_name,
+        version=version,
+        release_str=bundle_release_str,
+        requires=requires,
+        container_image=g.target_distribution_id,
+    )
+    if not success:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Bundle build failed:\n{build_log}")
+
+    release.bundle_rpm_filename = rpm_filename
 
     # Create release_builds records
     for e in locked:
