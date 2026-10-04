@@ -1267,9 +1267,15 @@ async def create_release(group_id: int, body: CreateReleaseRequest, db: Session 
     db.add(release)
     db.flush()  # assigns release.id without committing
 
-    # Embed release.id in the bundle's Release field: r{id}.{anchor_release}
-    # This guarantees a unique RPM EVR even when the anchor version is unchanged.
-    bundle_release_str = f"r{release.id}.{release_str}"
+    # Embed release.id in the bundle's Release field: {anchor_base}.{id}%{?dist}
+    # Format: "231.11.el9" (not "r11.231.el9") — rpmvercmp treats leading-letter
+    # segments as older than numeric ones, so an r-prefix would make every new
+    # release sort below any old purely-numeric release.
+    _dist_m = re.search(r'(\.[a-z]+\d+)$', release_str)
+    if _dist_m:
+        bundle_release_str = f"{release_str[:_dist_m.start()]}.{release.id}%{{?dist}}"
+    else:
+        bundle_release_str = f"{release_str}.{release.id}"
 
     # Build the bundle RPM
     requires = [{"name": e["project"].build_config.rpm_name or e["project"].name, "evr": e["evr"]} for e in locked]
