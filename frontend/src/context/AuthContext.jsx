@@ -32,7 +32,8 @@ export const AuthProvider = ({ children }) => {
       const data = await apiLogin(username, password);
       localStorage.setItem('token', data.access_token);
       setToken(data.access_token);
-      setUser({ username });
+      const profile = await fetchCurrentUser();
+      setUser(profile);
       return true;
     } catch (error) {
       console.error('Login failed:', error);
