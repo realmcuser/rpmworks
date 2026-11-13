@@ -2350,6 +2350,11 @@ async def get_project(project_id: int, db: Session = Depends(get_db), current_us
             inject_changelog=bc.inject_changelog or False,
         )
 
+    memberships = db.query(models.ProjectGroupMembership).filter(
+        models.ProjectGroupMembership.project_id == project_id
+    ).order_by(models.ProjectGroupMembership.group_order).all()
+    group_ids = [m.group_id for m in memberships]
+
     return ProjectDetail(
         id=project.id,
         name=project.name,
@@ -2363,6 +2368,7 @@ async def get_project(project_id: int, db: Session = Depends(get_db), current_us
         user_id=project.user_id,
         project_group_id=project.project_group_id,
         group_order=project.group_order,
+        group_ids=group_ids,
         cron_schedule=project.cron_schedule,
         source_config=project.source_config,
         build_config=build_config_data,
